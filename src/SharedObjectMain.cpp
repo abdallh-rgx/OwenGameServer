@@ -476,8 +476,11 @@ static void MainThread() {
 LOGF("[CORE] Initializing FName via engine");
 
 {
-    FName noneName = MakeFName(L"None");
-    LOGF("[CORE] FName None index=%d", noneName.ComparisonIndex);
+    FName testName = MakeFName(L"PlayerController");
+    LOGF("[CORE] FName PlayerController index=%d", testName.ComparisonIndex);
+
+    FName testName2 = MakeFName(L"GameNetDriver");
+    LOGF("[CORE] FName GameNetDriver index=%d", testName2.ComparisonIndex);
 }
 
     LOGF("[CORE] Before SetDedicatedServerMode");
