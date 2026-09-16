@@ -4,6 +4,8 @@
 #include "FName.hpp"
 
 #include <cstdlib>
+#include <map>
+#include <mutex>
 
 namespace Sarah {
 
@@ -135,16 +137,21 @@ void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj) {
 FString Utils::ToFString(const std::wstring& s) {
     std::u16string u16 = WToU16(s);
     u16.push_back(u'\0');
-
     FString result;
-    result.Data = (wchar_t*)u16.data();
-    result.NumElements = (int32)u16.size();
-    result.MaxElements = (int32)u16.size();
+    for (char16_t c : u16) result.Add(c);
     return result;
 }
 
 std::wstring Utils::FromFString(const FString& s) {
-    return U16ToW(s.CStr(), s ? s.Num() - 1 : 0);
+    if (!s) return L"";
+    std::u16string u16;
+    int32 n = s.Num();
+    const char16_t* data = (const char16_t*)s.Data;
+    for (int32 i = 0; i < n; i++) {
+        if (data[i] == 0) break;
+        u16.push_back(data[i]);
+    }
+    return U16ToW(u16.c_str(), u16.size());
 }
 
 bool Utils::TagContainerHasTag(const FGameplayTagContainer& container, const wchar_t* tagName) {
@@ -191,21 +198,72 @@ void Utils::MarkArrayDirty(FFastArraySerializer& serializer) {
 FName MakeFName(const wchar_t* name) {
     FName empty{};
     empty.ComparisonIndex = 0;
-
     if (!name) return empty;
 
-    std::u16string u16 = WToU16(name);
-    u16.push_back(u'\0');
+    static std::mutex mtx;
+    static std::map<std::wstring, int32_t> cache;
 
-    FString fs;
-    fs.Data = (wchar_t*)u16.data();
-    fs.NumElements = (int32)u16.size();
-    fs.MaxElements = (int32)u16.size();
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto it = cache.find(name);
+        if (it != cache.end()) {
+            FName r{};
+            r.ComparisonIndex = it->second;
+            return r;
+        }
+    }
 
-    FName result = UKismetStringLibrary::Conv_StringToName(fs);
+    uintptr_t pool = Sarah::ImageBase + Off::GNames;
+    if (!pool) return empty;
 
-    LOGI("[FNAME] '%ls' -> index=%d", name, result.ComparisonIndex);
-    return result;
+    std::u16string needle = WToU16(name);
+    int32_t found = 0;
+
+    const uint32_t MaxScan = 500000;
+    for (uint32_t i = 1; i < MaxScan; i++) {
+        uint32_t blockIdx = i >> 16;
+        uint32_t offset   = i & 0xFFFF;
+
+        uintptr_t blockPtrAddr = pool + 0x40 + (uint64_t)blockIdx * 8;
+        uintptr_t block = *(uintptr_t*)blockPtrAddr;
+        if (!block) continue;
+
+        uintptr_t entry = block + (uint64_t)offset * 4;
+        uint16_t header = *(uint16_t*)entry;
+        int len = header >> 6;
+        if (len <= 0 || len > 200) continue;
+        if ((size_t)len != needle.size()) continue;
+
+        if (header & 1) {
+            const char16_t* str = (const char16_t*)(entry + 4);
+            if (memcmp(str, needle.data(), (size_t)len * 2) == 0) {
+                found = (int32_t)i;
+                break;
+            }
+        } else {
+            const char* str = (const char*)(entry + 4);
+            bool match = true;
+            for (int j = 0; j < len; j++) {
+                if ((char16_t)(unsigned char)str[j] != needle[j]) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
+                found = (int32_t)i;
+                break;
+            }
+        }
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        cache[name] = found;
+    }
+
+    FName r{};
+    r.ComparisonIndex = found;
+    return r;
 }
 
 uint32_t MakeFNameIndex(const wchar_t* name) {
