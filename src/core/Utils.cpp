@@ -126,7 +126,7 @@ void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj) {
         if (!item) continue;
         if (*(void**)item == obj) {
             out.ObjectIndex = i;
-            out.ObjectSerialNumber = *(int32_t*)(item + 0x10) * 2; // FUObjectArray::GetSerialNumber
+            out.ObjectSerialNumber = *(int32_t*)(item + 0x10) * 2;
             return;
         }
     }
@@ -185,12 +185,48 @@ void Utils::MarkArrayDirty(FFastArraySerializer& serializer) {
     arrayKey++;
 }
 
-// ---------------------------------------------------------------------------
-// Definitions for SDK functions that are declared in the generated headers
-// but are not emitted by this MobileDumper-7 dump. They resolve the weak
-// object pointers through the GObjects array layout validated in
-// Sarah::InitGObjectsLayout().
-// ---------------------------------------------------------------------------
+FName MakeFName(const wchar_t* name) {
+    FName empty{};
+    empty.ComparisonIndex = 0;
+    empty.Number = 0;
+
+    if (!name) return empty;
+
+    static UObject* lib = nullptr;
+    static UFunction* convFunc = nullptr;
+    static bool initialized = false;
+
+    if (!initialized) {
+        initialized = true;
+        lib = Sarah::UObjectManager::Find(L"/Script/Engine.Default__KismetStringLibrary");
+        if (lib) {
+            convFunc = (UFunction*)Sarah::UObjectManager::Find(L"/Script/Engine.KismetStringLibrary.Conv_StringToName");
+        }
+        LOGI("[FNAME] StringLib=%p ConvFunc=%p", lib, convFunc);
+    }
+
+    if (!lib || !convFunc) return empty;
+
+    std::u16string u16 = WToU16(name);
+    FString fs;
+    for (char16_t c : u16) fs.Add(c);
+
+    struct FConvStringToNameParams {
+        FString InString;
+        FName   ReturnValue;
+    };
+    FConvStringToNameParams p{};
+    p.InString = fs;
+
+    Sarah::CallProcessEvent(lib, convFunc, &p);
+    return p.ReturnValue;
+}
+
+uint32_t MakeFNameIndex(const wchar_t* name) {
+    FName n = MakeFName(name);
+    return (uint32_t)n.ComparisonIndex;
+}
+
 namespace SDK {
 
 UObject* FWeakObjectPtr::Get() const {
@@ -202,7 +238,6 @@ UObject* FWeakObjectPtr::Get() const {
     UObject* obj = *(UObject**)item;
     if (!obj)
         return nullptr;
-    // Stale-reference check (FUObjectArray::GetSerialNumber == item->SerialNumber * 2)
     int32_t serial = *(int32_t*)(item + 0x10) * 2;
     if (serial != ObjectSerialNumber)
         return nullptr;
@@ -229,57 +264,17 @@ bool FWeakObjectPtr::operator!=(const class UObject* Other) const {
     return Get() != Other;
 }
 
-} // namespace SDK
+}
 
-// ---------------------------------------------------------------------------
-// Container allocator hooks required by UnrealContainers.hpp. Param arrays
-// that the game fills during ProcessEvent are allocated by the game's own
-// allocator, so the safe implementation never releases memory here (the
-// amounts involved are small and bounded per call).
-// ---------------------------------------------------------------------------
 namespace UC {
 
 void* ContainerRealloc(void* ptr, int64 newLen, uint32 alignment) {
-    (void)alignment; // glibc realloc returns memory aligned to 16 bytes, which
-                     // covers every alignment used by the SDK containers.
+    (void)alignment;
     return std::realloc(ptr, (size_t)newLen);
 }
 
 void ContainerFree(void* ptr) {
-    (void)ptr; // intentionally not freed: the memory may be owned by the
-               // game's allocator (out-param arrays filled via ProcessEvent)
-}
-FName MakeFName(const wchar_t* name) {
-    if (!name) return FName(0);
-
-    std::u16string u16 = WToU16(name);
-    FString fs;
-    for (char16_t c : u16) fs.Add(c);
-
-    UObject* lib = Sarah::UObjectManager::Find(L"/Script/Engine.Default__KismetStringLibrary");
-    if (!lib) return FName(0);
-
-    static UFunction* convFunc = nullptr;
-    if (!convFunc) {
-        convFunc = (UFunction*)Sarah::UObjectManager::Find(L"/Script/Engine.KismetStringLibrary.Conv_StringToName");
-    }
-    if (!convFunc) return FName(0);
-
-    struct FConvStringToNameParams {
-        FString InString;
-        FName   ReturnValue;
-    };
-    FConvStringToNameParams p{};
-    p.InString = fs;
-    p.ReturnValue = FName(0);
-
-    Sarah::CallProcessEvent(lib, convFunc, &p);
-    return p.ReturnValue;
+    (void)ptr;
 }
 
-uint32_t MakeFNameIndex(const wchar_t* name) {
-    FName n = MakeFName(name);
-    return (uint32_t)n.ComparisonIndex;
 }
-
-} // namespace UC
