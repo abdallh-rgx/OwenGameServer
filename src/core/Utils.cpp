@@ -146,7 +146,8 @@ std::wstring Utils::FromFString(const FString& s) {
     if (!s) return L"";
     std::u16string u16;
     int32 n = s.Num();
-    const char16_t* data = (const char16_t*)s.Data;
+    const char16_t* data = (const char16_t*)s.GetData();
+    if (!data) return L"";
     for (int32 i = 0; i < n; i++) {
         if (data[i] == 0) break;
         u16.push_back(data[i]);
