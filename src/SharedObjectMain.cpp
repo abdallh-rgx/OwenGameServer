@@ -1,0 +1,363 @@
+#include "pch.h"
+#include "options.h"
+#include "Utils.hpp"
+#include "UObject.hpp"
+#include "FName.hpp"
+#include "Misc.hpp"
+#include "GameMode.hpp"
+#include "Player.hpp"
+#include "Building.hpp"
+#include "Looting.hpp"
+#include "Creative.hpp"
+#include "Abilities.hpp"
+
+static void (*ProcessEventOG)(UObject*, UFunction*, void*) = nullptr;
+
+namespace Hooks {
+
+UFunction* ReadyToStartMatch = nullptr;
+UFunction* HandleStartingNewPlayer = nullptr;
+UFunction* OnAircraftEnteredDropZone = nullptr;
+UFunction* OnAircraftExitedDropZone = nullptr;
+UFunction* ServerAcknowledgePossession = nullptr;
+UFunction* ServerExecuteInventoryItem = nullptr;
+UFunction* ServerReturnToMainMenu = nullptr;
+UFunction* ServerAttemptAircraftJump = nullptr;
+UFunction* ServerPlayEmoteItem = nullptr;
+UFunction* ServerSendZiplineState = nullptr;
+UFunction* ServerHandlePickupInfo = nullptr;
+UFunction* MovingEmoteStopped = nullptr;
+UFunction* ServerAttemptInventoryDrop = nullptr;
+UFunction* ServerClientIsReadyToRespawn = nullptr;
+UFunction* ServerChangeName = nullptr;
+UFunction* OnCapsuleBeginOverlap = nullptr;
+UFunction* TeleportPlayerPawn = nullptr;
+UFunction* ServerCreateBuildingActor = nullptr;
+UFunction* ServerBeginEditingBuildingActor = nullptr;
+UFunction* ServerEditBuildingActor = nullptr;
+UFunction* ServerEndEditingBuildingActor = nullptr;
+UFunction* ServerRepairBuildingActor = nullptr;
+UFunction* ServerSpawnDeco = nullptr;
+UFunction* ServerSpawnDecoContextTrap = nullptr;
+UFunction* ServerCreateBuildingAndSpawnDeco = nullptr;
+UFunction* ServerCreateBuildingAndSpawnDecoContextTrap = nullptr;
+UFunction* ServerAttemptInteract = nullptr;
+UFunction* PickLootDrops = nullptr;
+UFunction* K2_SpawnPickupInWorld = nullptr;
+UFunction* SpawnItemVariantPickupInWorld = nullptr;
+UFunction* SupplyDropSpawnPickup = nullptr;
+UFunction* SetDynamicFoundationEnabled = nullptr;
+UFunction* SetDynamicFoundationTransform = nullptr;
+UFunction* TeleportPlayerToLinkedVolume = nullptr;
+UFunction* ServerTeleportToPlaygroundLobbyIsland = nullptr;
+UFunction* MakeNewCreativePlot = nullptr;
+UFunction* UpdateCreativePlotName = nullptr;
+
+void CacheFunctions() {
+    ReadyToStartMatch = (UFunction*)Utils::FindObject(L"/Script/Engine.GameMode.ReadyToStartMatch");
+    HandleStartingNewPlayer = (UFunction*)Utils::FindObject(L"/Script/Engine.GameModeBase.HandleStartingNewPlayer");
+    OnAircraftEnteredDropZone = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortGameModeAthena.OnAircraftEnteredDropZone");
+    OnAircraftExitedDropZone = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortGameModeAthena.OnAircraftExitedDropZone");
+    ServerAcknowledgePossession = (UFunction*)Utils::FindObject(L"/Script/Engine.PlayerController.ServerAcknowledgePossession");
+    ServerExecuteInventoryItem = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerExecuteInventoryItem");
+    ServerReturnToMainMenu = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerReturnToMainMenu");
+    ServerAttemptAircraftJump = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortControllerComponent_Aircraft.ServerAttemptAircraftJump");
+    ServerPlayEmoteItem = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerPlayEmoteItem");
+    ServerSendZiplineState = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerPawn.ServerSendZiplineState");
+    ServerHandlePickupInfo = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerPawn.ServerHandlePickupInfo");
+    MovingEmoteStopped = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPawn.MovingEmoteStopped");
+    ServerAttemptInventoryDrop = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerAttemptInventoryDrop");
+    ServerClientIsReadyToRespawn = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerControllerAthena.ServerClientIsReadyToRespawn");
+    ServerChangeName = (UFunction*)Utils::FindObject(L"/Script/Engine.PlayerController.ServerChangeName");
+    OnCapsuleBeginOverlap = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerPawn.OnCapsuleBeginOverlap");
+    TeleportPlayerPawn = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortMissionLibrary.TeleportPlayerPawn");
+    ServerCreateBuildingActor = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerCreateBuildingActor");
+    ServerBeginEditingBuildingActor = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerBeginEditingBuildingActor");
+    ServerEditBuildingActor = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerEditBuildingActor");
+    ServerEndEditingBuildingActor = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerEndEditingBuildingActor");
+    ServerRepairBuildingActor = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerRepairBuildingActor");
+    ServerSpawnDeco = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortDecoTool.ServerSpawnDeco");
+    ServerSpawnDecoContextTrap = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortDecoTool_ContextTrap.ServerSpawnDeco_Implementation");
+    ServerCreateBuildingAndSpawnDeco = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortDecoTool.ServerCreateBuildingAndSpawnDeco");
+    ServerCreateBuildingAndSpawnDecoContextTrap = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortDecoTool_ContextTrap.ServerCreateBuildingAndSpawnDeco_Implementation");
+    ServerAttemptInteract = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortControllerComponent_Interaction.ServerAttemptInteract");
+    PickLootDrops = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortKismetLibrary.PickLootDrops");
+    K2_SpawnPickupInWorld = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortKismetLibrary.K2_SpawnPickupInWorld");
+    SpawnItemVariantPickupInWorld = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortKismetLibrary.SpawnItemVariantPickupInWorld");
+    SupplyDropSpawnPickup = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortAthenaSupplyDrop.SpawnPickup");
+    SetDynamicFoundationEnabled = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.BuildingFoundation.SetDynamicFoundationEnabled");
+    SetDynamicFoundationTransform = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.BuildingFoundation.SetDynamicFoundationTransform");
+    TeleportPlayerToLinkedVolume = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortAthenaCreativePortal.TeleportPlayerToLinkedVolume");
+    ServerTeleportToPlaygroundLobbyIsland = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerControllerAthena.ServerTeleportToPlaygroundLobbyIsland");
+    MakeNewCreativePlot = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerControllerAthena.MakeNewCreativePlot");
+    UpdateCreativePlotName = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerControllerAthena.UpdateCreativePlotName");
+
+    int total = 0;
+    UFunction* all[] = { ReadyToStartMatch, HandleStartingNewPlayer, OnAircraftEnteredDropZone, OnAircraftExitedDropZone,
+        ServerAcknowledgePossession, ServerExecuteInventoryItem, ServerReturnToMainMenu, ServerAttemptAircraftJump,
+        ServerPlayEmoteItem, ServerSendZiplineState, ServerHandlePickupInfo, MovingEmoteStopped,
+        ServerAttemptInventoryDrop, ServerClientIsReadyToRespawn, ServerChangeName, OnCapsuleBeginOverlap,
+        TeleportPlayerPawn, ServerCreateBuildingActor, ServerBeginEditingBuildingActor, ServerEditBuildingActor,
+        ServerEndEditingBuildingActor, ServerRepairBuildingActor, ServerAttemptInteract, PickLootDrops,
+        K2_SpawnPickupInWorld, SpawnItemVariantPickupInWorld, SupplyDropSpawnPickup, SetDynamicFoundationEnabled,
+        SetDynamicFoundationTransform, TeleportPlayerToLinkedVolume, ServerTeleportToPlaygroundLobbyIsland };
+    for (auto* fn : all) if (fn) total++;
+    LOGI("[Hooks] Cached %d/%d UFunctions", total, (int)(sizeof(all) / sizeof(all[0])));
+}
+
+}
+
+void ProcessEventHook(UObject* context, UFunction* function, void* parms) {
+    if (function && parms) {
+        if (function == Hooks::ReadyToStartMatch) {
+            GameMode::ReadyToStartMatch(context, (Params::AGameMode_ReadyToStartMatch*)parms);
+            return;
+        }
+        if (function == Hooks::HandleStartingNewPlayer) {
+            GameMode::HandleStartingNewPlayer(context, (Params::AGameModeBase_HandleStartingNewPlayer*)parms);
+            return;
+        }
+        if (function == Hooks::OnAircraftEnteredDropZone) {
+            GameMode::OnAircraftEnteredDropZone(context, (Params::AFortGameModeAthena_OnAircraftEnteredDropZone*)parms);
+            return;
+        }
+        if (function == Hooks::OnAircraftExitedDropZone) {
+            GameMode::OnAircraftExitedDropZone(context, (Params::AFortGameModeAthena_OnAircraftExitedDropZone*)parms);
+            return;
+        }
+        if (function == Hooks::ServerAcknowledgePossession) {
+            Player::ServerAcknowledgePossession(context, (Params::APlayerController_ServerAcknowledgePossession*)parms);
+            return;
+        }
+        if (function == Hooks::ServerExecuteInventoryItem) {
+            Player::ServerExecuteInventoryItem(context, (Params::AFortPlayerController_ServerExecuteInventoryItem*)parms);
+            return;
+        }
+        if (function == Hooks::ServerReturnToMainMenu) {
+            Player::ServerReturnToMainMenu(context);
+            return;
+        }
+        if (function == Hooks::ServerAttemptAircraftJump) {
+            Player::ServerAttemptAircraftJump(context, (Params::UFortControllerComponent_Aircraft_ServerAttemptAircraftJump*)parms);
+            return;
+        }
+        if (function == Hooks::ServerPlayEmoteItem) {
+            Player::ServerPlayEmoteItem(context, (Params::AFortPlayerController_ServerPlayEmoteItem*)parms);
+            return;
+        }
+        if (function == Hooks::ServerSendZiplineState) {
+            Player::ServerSendZiplineState(context, (Params::AFortPlayerPawn_ServerSendZiplineState*)parms);
+            return;
+        }
+        if (function == Hooks::ServerHandlePickupInfo) {
+            Player::ServerHandlePickupInfo(context, (Params::AFortPlayerPawn_ServerHandlePickupInfo*)parms);
+            return;
+        }
+        if (function == Hooks::MovingEmoteStopped) {
+            Player::MovingEmoteStopped(context);
+            return;
+        }
+        if (function == Hooks::ServerAttemptInventoryDrop) {
+            Player::ServerAttemptInventoryDrop(context, (Params::AFortPlayerController_ServerAttemptInventoryDrop*)parms);
+            return;
+        }
+        if (function == Hooks::ServerClientIsReadyToRespawn) {
+            Player::ServerClientIsReadyToRespawn(context);
+            return;
+        }
+        if (function == Hooks::ServerChangeName) {
+            Player::ServerChangeName(context, (Params::APlayerController_ServerChangeName*)parms);
+            return;
+        }
+        if (function == Hooks::OnCapsuleBeginOverlap) {
+            Player::OnCapsuleBeginOverlap(context, (Params::AFortPlayerPawn_OnCapsuleBeginOverlap*)parms);
+            return;
+        }
+        if (function == Hooks::TeleportPlayerPawn) {
+            Player::TeleportPlayerPawn(context, (Params::UFortMissionLibrary_TeleportPlayerPawn*)parms);
+            return;
+        }
+        if (function == Hooks::ServerCreateBuildingActor) {
+            Building::ServerCreateBuildingActor(context, (Params::AFortPlayerController_ServerCreateBuildingActor*)parms);
+            return;
+        }
+        if (function == Hooks::ServerBeginEditingBuildingActor) {
+            Building::ServerBeginEditingBuildingActor(context, (Params::AFortPlayerController_ServerBeginEditingBuildingActor*)parms);
+            return;
+        }
+        if (function == Hooks::ServerEditBuildingActor) {
+            Building::ServerEditBuildingActor(context, (Params::AFortPlayerController_ServerEditBuildingActor*)parms);
+            return;
+        }
+        if (function == Hooks::ServerEndEditingBuildingActor) {
+            Building::ServerEndEditingBuildingActor(context, (Params::AFortPlayerController_ServerEndEditingBuildingActor*)parms);
+            return;
+        }
+        if (function == Hooks::ServerRepairBuildingActor) {
+            Building::ServerRepairBuildingActor(context, (Params::AFortPlayerController_ServerRepairBuildingActor*)parms);
+            return;
+        }
+        if (function == Hooks::ServerSpawnDeco || function == Hooks::ServerSpawnDecoContextTrap) {
+            Building::ServerSpawnDeco(context, (Params::AFortDecoTool_ServerSpawnDeco*)parms);
+            return;
+        }
+        if (function == Hooks::ServerCreateBuildingAndSpawnDeco || function == Hooks::ServerCreateBuildingAndSpawnDecoContextTrap) {
+            Building::ServerCreateBuildingAndSpawnDeco(context, (Params::AFortDecoTool_ServerCreateBuildingAndSpawnDeco*)parms);
+            return;
+        }
+        if (function == Hooks::ServerAttemptInteract) {
+            Looting::ServerAttemptInteract(context, (Params::UFortControllerComponent_Interaction_ServerAttemptInteract*)parms);
+            return;
+        }
+        if (function == Hooks::PickLootDrops) {
+            Looting::PickLootDrops(context, (Params::UFortKismetLibrary_PickLootDrops*)parms);
+            return;
+        }
+        if (function == Hooks::K2_SpawnPickupInWorld) {
+            Looting::K2_SpawnPickupInWorld(context, (Params::UFortKismetLibrary_K2_SpawnPickupInWorld*)parms);
+            return;
+        }
+        if (function == Hooks::SpawnItemVariantPickupInWorld) {
+            Looting::SpawnItemVariantPickupInWorld(context, (Params::UFortKismetLibrary_SpawnItemVariantPickupInWorld*)parms);
+            return;
+        }
+        if (function == Hooks::SupplyDropSpawnPickup) {
+            Looting::SupplyDropSpawnPickup(context, (Params::AFortAthenaSupplyDrop_SpawnPickup*)parms);
+            return;
+        }
+        if (function == Hooks::SetDynamicFoundationEnabled) {
+            Misc::SetDynamicFoundationEnabled(context, (Params::ABuildingFoundation_SetDynamicFoundationEnabled*)parms);
+            return;
+        }
+        if (function == Hooks::SetDynamicFoundationTransform) {
+            Misc::SetDynamicFoundationTransform(context, (Params::ABuildingFoundation_SetDynamicFoundationTransform*)parms);
+            return;
+        }
+        if (function == Hooks::TeleportPlayerToLinkedVolume) {
+            Creative::TeleportPlayerToLinkedVolume(context, (Params::AFortAthenaCreativePortal_TeleportPlayerToLinkedVolume*)parms);
+            return;
+        }
+        if (function == Hooks::ServerTeleportToPlaygroundLobbyIsland) {
+            Creative::ServerTeleportToPlaygroundLobbyIsland((AFortPlayerControllerAthena*)context);
+            return;
+        }
+        if (function == Hooks::MakeNewCreativePlot) {
+            Creative::MakeNewCreativePlot(context, (Params::AFortPlayerControllerAthena_MakeNewCreativePlot*)parms);
+            return;
+        }
+        if (function == Hooks::UpdateCreativePlotName) {
+            Creative::UpdateCreativePlotName(context, (Params::AFortPlayerControllerAthena_UpdateCreativePlotName*)parms);
+            return;
+        }
+    }
+
+    if (ProcessEventOG)
+        ProcessEventOG(context, function, parms);
+}
+
+static int (*GetNetModeOG)(void*) = nullptr;
+
+static int GetNetModeHook(void* world) {
+    return 1;
+}
+
+static EEFortTeam (*PickTeamOG)(AFortGameModeAthena*, uint8_t, AFortPlayerControllerAthena*) = nullptr;
+
+static EEFortTeam PickTeamHook(AFortGameModeAthena* gameMode, uint8_t preferredTeam, AFortPlayerControllerAthena* controller) {
+    return GameMode::PickTeam(gameMode, preferredTeam, controller);
+}
+
+static APawn* (*SpawnDefaultPawnForOG)(AGameModeBase*, AController*, AActor*) = nullptr;
+
+static APawn* SpawnDefaultPawnForHook(AGameModeBase* gameMode, AController* newPlayer, AActor* startSpot) {
+    APawn* result = GameMode::SpawnDefaultPawnFor(gameMode, newPlayer, startSpot);
+    if (result) return result;
+    if (SpawnDefaultPawnForOG) return SpawnDefaultPawnForOG(gameMode, newPlayer, startSpot);
+    return nullptr;
+}
+
+static void WaitForWorld() {
+    for (int i = 0; i < 120; i++) {
+        if (UWorld::GetWorld() && UEngine::GetEngine()) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+}
+
+static void MainThread() {
+    std::this_thread::sleep_for(std::chrono::seconds(5));
+
+    if (!InitImageBase()) {
+        LOGE("libUnreal.so not found");
+        return;
+    }
+
+    LOGI("===========================================");
+    LOGI(" OwenGameServer 21.30 Android ARM64");
+    LOGI(" ImageBase = 0x%lx", Sarah::ImageBase);
+    LOGI("===========================================");
+
+    WaitForWorld();
+
+    if (!Sarah::InitGObjectsLayout()) {
+        LOGE("GObjects layout validation failed");
+    } else {
+        LOGI("[Core] GObjects layout: padded=%d perChunk=%d num=%d",
+            Sarah::GObjectsLayout.Padded, Sarah::GObjectsLayout.ElementsPerChunk, Sarah::UObjectManager::Num());
+    }
+
+    if (!Sarah::InitFNameRuntime()) {
+        LOGE("FName pool layout validation failed");
+    } else {
+        int noneIdx = Sarah::FNameReader::FindByName(L"None");
+        LOGI("[Core] FName pool ok: shift=%d blocks=0x%lx ptrMember=%d None=%d",
+            Sarah::FNameRT.LenShift, Sarah::FNameRT.BlocksOffset, (int)Sarah::FNameRT.BlocksArePointerMember, noneIdx);
+    }
+
+    LOGI("[Before Patch] GIsEditor=%d GIsClient=%d GIsServer=%d",
+        GetGIsEditor(), GetGIsClient(), GetGIsServer());
+
+    SetDedicatedServerMode();
+
+    LOGI("[After Patch]  GIsEditor=%d GIsClient=%d GIsServer=%d",
+        GetGIsEditor(), GetGIsClient(), GetGIsServer());
+
+    srand((uint32_t)time(nullptr));
+
+    Hooks::CacheFunctions();
+
+    DobbyHook((void*)(Sarah::ImageBase + Off::ProcessEvent), (void*)ProcessEventHook, (void**)&ProcessEventOG);
+    DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
+    DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
+    DobbyHook((void*)(Sarah::ImageBase + Off::ClientOnPawnDied), (void*)Player::ClientOnPawnDied, (void**)&Player::ClientOnPawnDiedOG);
+    DobbyHook((void*)(Sarah::ImageBase + Off::BuildingActor_OnDamageServer), (void*)Building::OnDamageServer, (void**)&Building::BuildingActor_OnDamageServerOG);
+    DobbyHook((void*)(Sarah::ImageBase + Off::PickTeam), (void*)PickTeamHook, (void**)&PickTeamOG);
+    DobbyHook((void*)(Sarah::ImageBase + Off::StartAircraftPhase), (void*)Misc::StartAircraftPhase, (void**)&Misc::StartAircraftPhaseOG);
+    DobbyHook((void*)(Sarah::ImageBase + Off::SpawnDefaultPawnFor), (void*)SpawnDefaultPawnForHook, (void**)&SpawnDefaultPawnForOG);
+
+    if (bGameSessions) {
+        PatchBytes<uint8_t>(Off::GameSessionPatch, 0x85);
+    }
+
+    LOGI("[Core] Hooks installed");
+
+    if (Misc::Listen()) {
+        LOGI("[Core] Server is listening");
+    } else {
+        LOGE("[Core] Listen FAILED");
+    }
+
+    UKismetSystemLibrary::ExecuteConsoleCommand(UWorld::GetWorld(),
+        Utils::ToFString(bCreative ? L"open Creative_NoApollo_Terrain" : L"open Artemis_Terrain"), nullptr);
+
+    LOGI("[Core] Map travel requested");
+}
+
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
+    LOGI("OwenGameServer loading...");
+    std::thread(MainThread).detach();
+    return JNI_VERSION_1_6;
+}
+
+extern "C" JNIEXPORT void JNICALL JNI_OnUnload(JavaVM* vm, void* reserved) {
+    LOGI("OwenGameServer unloading");
+}

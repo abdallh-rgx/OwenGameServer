@@ -1,0 +1,62 @@
+#pragma once
+#define WIN32_LEAN_AND_MEAN
+#include <jni.h>
+#include <cstdint>
+#include <cstddef>
+#include <cstdio>
+#include <cstring>
+#include <cstdlib>
+#include <cmath>
+#include <ctime>
+#include <cstdarg>
+#include <string>
+#include <vector>
+#include <map>
+#include <set>
+#include <array>
+#include <thread>
+#include <mutex>
+#include <atomic>
+#include <chrono>
+#include <algorithm>
+#include <numeric>
+#include <random>
+#include <sstream>
+#include <iomanip>
+#include <future>
+#include <optional>
+#include <functional>
+#include <dlfcn.h>
+#include <link.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <android/log.h>
+
+#include "UnrealContainers.hpp"
+#include "SDK.hpp"
+using namespace SDK;
+
+#include "dobby.h"
+
+#include "core/AndroidBase.hpp"
+#include "core/Log.hpp"
+#include "core/Macros.hpp"
+#include "core/Offsets.hpp"
+#include "core/FName.hpp"
+#include "core/UObject.hpp"
+#include "core/Utils.hpp"
+
+#include "modules/Abilities.hpp"
+#include "modules/AC.hpp"
+#include "modules/API.hpp"
+#include "modules/Building.hpp"
+#include "modules/Creative.hpp"
+#include "modules/GameMode.hpp"
+#include "modules/Inventory.hpp"
+#include "modules/Lategame.hpp"
+#include "modules/Looting.hpp"
+#include "modules/Misc.hpp"
+#include "modules/Player.hpp"
+#include "modules/Results.hpp"
+#include "modules/Tournaments.hpp"
+#include "modules/XP.hpp"
