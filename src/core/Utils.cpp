@@ -249,5 +249,37 @@ void ContainerFree(void* ptr) {
     (void)ptr; // intentionally not freed: the memory may be owned by the
                // game's allocator (out-param arrays filled via ProcessEvent)
 }
+FName MakeFName(const wchar_t* name) {
+    if (!name) return FName(0);
+
+    std::u16string u16 = WToU16(name);
+    FString fs;
+    for (char16_t c : u16) fs.Add(c);
+
+    UObject* lib = Sarah::UObjectManager::Find(L"/Script/Engine.Default__KismetStringLibrary");
+    if (!lib) return FName(0);
+
+    static UFunction* convFunc = nullptr;
+    if (!convFunc) {
+        convFunc = (UFunction*)Sarah::UObjectManager::Find(L"/Script/Engine.KismetStringLibrary.Conv_StringToName");
+    }
+    if (!convFunc) return FName(0);
+
+    struct FConvStringToNameParams {
+        FString InString;
+        FName   ReturnValue;
+    };
+    FConvStringToNameParams p{};
+    p.InString = fs;
+    p.ReturnValue = FName(0);
+
+    Sarah::CallProcessEvent(lib, convFunc, &p);
+    return p.ReturnValue;
+}
+
+uint32_t MakeFNameIndex(const wchar_t* name) {
+    FName n = MakeFName(name);
+    return (uint32_t)n.ComparisonIndex;
+}
 
 } // namespace UC
