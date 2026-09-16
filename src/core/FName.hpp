@@ -24,26 +24,23 @@ struct FNameRuntime {
 
 inline FNameRuntime FNameRT;
 
-inline bool IsReadablePointer(uintptr_t p) {
-    if (p < 0x1000) return false;
-    uintptr_t start = Sarah::ImageBase;
-    uintptr_t end   = Sarah::ImageBase + 0x40000000ULL;
-    return p >= start && p < end;
+inline bool IsReadablePtr(uintptr_t p) {
+    return p >= 0x10000ULL && p < 0x0000800000000000ULL;
 }
 
 inline void* FNameBlockPtr(uint32_t blockIndex) {
     uintptr_t pool = Sarah::ImageBase + Off::GNames;
+    void* blockPtr = nullptr;
 
     if (FNameRT.BlocksArePointerMember) {
-        uintptr_t blocksArray = *(uintptr_t*)(pool + FNameRT.BlocksOffset);
-        if (!blocksArray || !IsReadablePointer(blocksArray)) return nullptr;
-        void* blockPtr = *(void**)(blocksArray + (uint64_t)blockIndex * 8);
-        if (!blockPtr || !IsReadablePointer((uintptr_t)blockPtr)) return nullptr;
-        return blockPtr;
+        uintptr_t arr = *(uintptr_t*)(pool + FNameRT.BlocksOffset);
+        if (!IsReadablePtr(arr)) return nullptr;
+        blockPtr = *(void**)(arr + (uint64_t)blockIndex * 8);
+    } else {
+        blockPtr = *(void**)(pool + FNameRT.BlocksOffset + (uint64_t)blockIndex * 8);
     }
 
-    void* blockPtr = *(void**)(pool + FNameRT.BlocksOffset + (uint64_t)blockIndex * 8);
-    if (!blockPtr || !IsReadablePointer((uintptr_t)blockPtr)) return nullptr;
+    if (!IsReadablePtr((uintptr_t)blockPtr)) return nullptr;
     return blockPtr;
 }
 
@@ -53,21 +50,25 @@ inline bool FNameValidateEntry0(int lenShift, uint64_t blocksOffset, uint64_t cu
 
     if (pointerMember) {
         uintptr_t arr = *(uintptr_t*)(pool + blocksOffset);
-        if (!arr || !IsReadablePointer(arr)) return false;
+        if (!IsReadablePtr(arr)) return false;
         block0 = *(void**)arr;
     } else {
         block0 = *(void**)(pool + blocksOffset);
     }
 
-    if (!block0 || !IsReadablePointer((uintptr_t)block0)) return false;
+    if (!IsReadablePtr((uintptr_t)block0)) return false;
 
     FNameEntryHeader header = *(FNameEntryHeader*)block0;
-    if (header.IsWide()) return false;
     int len = header.Length(lenShift);
     if (len != 4) return false;
 
-    const char16_t* str = (const char16_t*)((uint8_t*)block0 + 2);
-    return str[0] == u'N' && str[1] == u'o' && str[2] == u'n' && str[3] == u'e';
+    if (header.IsWide()) {
+        const char16_t* str = (const char16_t*)((uint8_t*)block0 + 2);
+        return str[0] == u'N' && str[1] == u'o' && str[2] == u'n' && str[3] == u'e';
+    } else {
+        const char* str = (const char*)((uint8_t*)block0 + 2);
+        return str[0] == 'N' && str[1] == 'o' && str[2] == 'n' && str[3] == 'e';
+    }
 }
 
 inline bool InitFNameRuntime() {
@@ -81,10 +82,10 @@ inline bool InitFNameRuntime() {
     const FCandidate candidates[] = {
         {1, 0x40, 0x3C, false},
         {1, 0x40, 0x3C, true},
-        {1, 0x10, 0xC,  false},
+        {1, 0x10, 0x0C, false},
+        {1, 0x10, 0x0C, true},
         {6, 0x40, 0x3C, false},
         {6, 0x40, 0x3C, true},
-        {6, 0x10, 0xC,  false},
     };
 
     for (const auto& c : candidates) {
@@ -129,14 +130,23 @@ public:
 
     static std::u16string ToStringU16(int32_t comparisonIndex) {
         uint8_t* addr = (uint8_t*)GetEntryAddress(comparisonIndex);
-        if (!addr || !IsReadablePointer((uintptr_t)addr)) return {};
+        if (!addr) return {};
 
         FNameEntryHeader header = *(FNameEntryHeader*)addr;
         int len = header.Length(FNameRT.LenShift);
         if (len <= 0 || len > 1024) return {};
 
-        const char16_t* str = (const char16_t*)(addr + 2);
-        return std::u16string(str, (size_t)len);
+        if (header.IsWide()) {
+            const char16_t* str = (const char16_t*)(addr + 2);
+            return std::u16string(str, (size_t)len);
+        }
+
+        const char* str = (const char*)(addr + 2);
+        std::u16string out;
+        out.reserve((size_t)len);
+        for (int i = 0; i < len; i++)
+            out.push_back((char16_t)(unsigned char)str[i]);
+        return out;
     }
 
     static std::wstring ToString(int32_t comparisonIndex) {
@@ -168,16 +178,24 @@ public:
 
         for (int i = 1; i < total; i++) {
             uint8_t* addr = (uint8_t*)GetEntryAddress(i);
-            if (!addr || !IsReadablePointer((uintptr_t)addr)) continue;
+            if (!addr) continue;
 
             FNameEntryHeader header = *(FNameEntryHeader*)addr;
             int len = header.Length(FNameRT.LenShift);
             if (len <= 0 || len > 128) continue;
             if ((size_t)len != needle.size()) continue;
-            if (header.IsWide()) continue;
 
-            const char16_t* str = (const char16_t*)(addr + 2);
-            if (memcmp(str, needle.c_str(), (size_t)len * 2) == 0) return i;
+            if (header.IsWide()) {
+                const char16_t* str = (const char16_t*)(addr + 2);
+                if (memcmp(str, needle.c_str(), (size_t)len * 2) == 0) return i;
+            } else {
+                const char* str = (const char*)(addr + 2);
+                bool match = true;
+                for (int j = 0; j < len; j++) {
+                    if ((char16_t)(unsigned char)str[j] != needle[(size_t)j]) { match = false; break; }
+                }
+                if (match) return i;
+            }
         }
         return 0;
     }
