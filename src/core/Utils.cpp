@@ -71,7 +71,7 @@ AActor* Utils::SpawnActor(UClass* cls, const FVector& loc, const FRotator& rot, 
 
     CoreUObject::FTransform transform = MakeTransform(loc, rot);
 
-    using t = AActor* (*)(void*, UClass*, FTransform*, FSpawnParams*);
+    using t = AActor* (*)(void*, UClass*, CoreUObject::FTransform*, FSpawnParams*);
     static t fn = nullptr;
     if (!fn) fn = (t)(Sarah::ImageBase + Off::UWorld_SpawnActor);
 
@@ -115,6 +115,23 @@ float Utils::EvaluateCurve(FCurveTableRowHandle& handle, float inTime) {
     return out;
 }
 
+void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj) {
+    out.ObjectIndex = 0;
+    out.ObjectSerialNumber = 0;
+    if (!obj || !Sarah::GObjectsLayout.Initialized) return;
+
+    int32_t n = Sarah::UObjectManager::Num();
+    for (int32_t i = 0; i < n; i++) {
+        uint8_t* item = Sarah::GetItemByIndex(i);
+        if (!item) continue;
+        if (*(void**)item == obj) {
+            out.ObjectIndex = i;
+            out.ObjectSerialNumber = *(int32_t*)(item + 0x10) * 2; // FUObjectArray::GetSerialNumber
+            return;
+        }
+    }
+}
+
 FString Utils::ToFString(const std::wstring& s) {
     std::u16string u16 = WToU16(s);
     u16.push_back(u'\0');
@@ -128,7 +145,7 @@ std::wstring Utils::FromFString(const FString& s) {
 }
 
 bool Utils::TagContainerHasTag(const FGameplayTagContainer& container, const wchar_t* tagName) {
-    if (!container.GameplayTags.Data) return false;
+    if (container.GameplayTags.Num() == 0) return false;
     FName tag = MakeFName(tagName);
     if (tag.ComparisonIndex == 0) return false;
     for (int i = 0; i < container.GameplayTags.Num(); i++) {
@@ -139,7 +156,7 @@ bool Utils::TagContainerHasTag(const FGameplayTagContainer& container, const wch
 }
 
 bool Utils::TagContainerHasAll(const FGameplayTagContainer& container, const FGameplayTagContainer& required) {
-    if (!required.GameplayTags.Data) return true;
+    if (required.GameplayTags.Num() == 0) return true;
     for (int i = 0; i < required.GameplayTags.Num(); i++) {
         bool found = false;
         for (int j = 0; j < container.GameplayTags.Num(); j++) {
@@ -167,3 +184,70 @@ void Utils::MarkArrayDirty(FFastArraySerializer& serializer) {
     int32_t& arrayKey = *(int32_t*)((uint8_t*)&serializer + 0x54);
     arrayKey++;
 }
+
+// ---------------------------------------------------------------------------
+// Definitions for SDK functions that are declared in the generated headers
+// but are not emitted by this MobileDumper-7 dump. They resolve the weak
+// object pointers through the GObjects array layout validated in
+// Sarah::InitGObjectsLayout().
+// ---------------------------------------------------------------------------
+namespace SDK {
+
+UObject* FWeakObjectPtr::Get() const {
+    if (ObjectSerialNumber == 0 || ObjectIndex < 0)
+        return nullptr;
+    uint8_t* item = Sarah::GetItemByIndex(ObjectIndex);
+    if (!item)
+        return nullptr;
+    UObject* obj = *(UObject**)item;
+    if (!obj)
+        return nullptr;
+    // Stale-reference check (FUObjectArray::GetSerialNumber == item->SerialNumber * 2)
+    int32_t serial = *(int32_t*)(item + 0x10) * 2;
+    if (serial != ObjectSerialNumber)
+        return nullptr;
+    return obj;
+}
+
+bool FWeakObjectPtr::IsValid() const {
+    return Get() != nullptr;
+}
+
+bool FWeakObjectPtr::operator==(const FWeakObjectPtr& Other) const {
+    return ObjectIndex == Other.ObjectIndex && ObjectSerialNumber == Other.ObjectSerialNumber;
+}
+
+bool FWeakObjectPtr::operator!=(const FWeakObjectPtr& Other) const {
+    return !(*this == Other);
+}
+
+bool FWeakObjectPtr::operator==(const class UObject* Other) const {
+    return Get() == Other;
+}
+
+bool FWeakObjectPtr::operator!=(const class UObject* Other) const {
+    return Get() != Other;
+}
+
+} // namespace SDK
+
+// ---------------------------------------------------------------------------
+// Container allocator hooks required by UnrealContainers.hpp. Param arrays
+// that the game fills during ProcessEvent are allocated by the game's own
+// allocator, so the safe implementation never releases memory here (the
+// amounts involved are small and bounded per call).
+// ---------------------------------------------------------------------------
+namespace UC {
+
+void* ContainerRealloc(void* ptr, int64 newLen, uint32 alignment) {
+    (void)alignment; // glibc realloc returns memory aligned to 16 bytes, which
+                     // covers every alignment used by the SDK containers.
+    return std::realloc(ptr, (size_t)newLen);
+}
+
+void ContainerFree(void* ptr) {
+    (void)ptr; // intentionally not freed: the memory may be owned by the
+               // game's allocator (out-param arrays filled via ProcessEvent)
+}
+
+} // namespace UC

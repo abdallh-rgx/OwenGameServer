@@ -61,7 +61,7 @@ FFortItemEntry* Inventory::MakeItemEntry(UFortItemDefinition* def, int32_t count
     entry->ItemDefinition = def;
     entry->Count = count;
     entry->Durability = 1.f;
-    entry->GameplayAbilitySpecHandle = FGameplayAbilitySpecHandle(-1);
+    { FGameplayAbilitySpecHandle specHandle{}; specHandle.Handle = -1; entry->GameplayAbilitySpecHandle = specHandle; }
     entry->Level = level;
 
     if (auto weapon = CastSDK<UFortWeaponItemDefinition>(def)) {
@@ -169,14 +169,14 @@ AFortPickupAthena* Inventory::SpawnPickup(FVector loc, FFortItemEntry& entry,
     newPickup->PrimaryPickupItemEntry.Count = overrideCount != -1 ? overrideCount : entry.Count;
     newPickup->PrimaryPickupItemEntry.PhantomReserveAmmo = entry.PhantomReserveAmmo;
     newPickup->OnRep_PrimaryPickupItemEntry();
-    newPickup->PawnWhoDroppedPickup = pawn;
+    newPickup->PawnWhoDroppedPickup = MakeWeakPtr(static_cast<AFortPawn*>(pawn));
 
     newPickup->TossPickup(loc, pawn, -1, toss, true, sourceType, spawnSource);
     newPickup->bTossedFromContainer = spawnSource == EEFortPickupSpawnSource::Chest || spawnSource == EEFortPickupSpawnSource::AmmoBox;
     if (newPickup->bTossedFromContainer)
         newPickup->OnRep_TossedFromContainer();
 
-    newPickup->SetNetDormancy(ENetDormancy::DORM_DormantAll);
+    newPickup->SetNetDormancy(EENetDormancy::DORM_DormantAll);
 
     return newPickup;
 }
@@ -211,14 +211,14 @@ AFortPickupAthena* Inventory::SpawnPickupFromContainer(ABuildingContainer* conta
     newPickup->PrimaryPickupItemEntry.Count = overrideCount != -1 ? overrideCount : entry.Count;
     newPickup->PrimaryPickupItemEntry.PhantomReserveAmmo = entry.PhantomReserveAmmo;
     newPickup->OnRep_PrimaryPickupItemEntry();
-    newPickup->PawnWhoDroppedPickup = pawn;
+    newPickup->PawnWhoDroppedPickup = MakeWeakPtr(static_cast<AFortPawn*>(pawn));
 
     UFortKismetLibrary::TossPickupFromContainer(UWorld::GetWorld(), container, newPickup, 1, 0,
         container->LootTossConeHalfAngle_Athena, container->LootTossDirection_Athena, container->LootTossSpeed_Athena, false);
     newPickup->bTossedFromContainer = true;
     newPickup->OnRep_TossedFromContainer();
 
-    newPickup->SetNetDormancy(ENetDormancy::DORM_DormantAll);
+    newPickup->SetNetDormancy(EENetDormancy::DORM_DormantAll);
 
     return newPickup;
 }

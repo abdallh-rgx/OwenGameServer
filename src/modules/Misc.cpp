@@ -79,7 +79,11 @@ bool Misc::StartAircraftPhase(AFortGameModeAthena* gameMode, char a2) {
             FVector loc = gameMode->SafeZoneLocations.Num() > 3 ? gameMode->SafeZoneLocations[3] : FVector();
             loc.Z = 17500.f;
 
-            aircraft->FlightInfo.FlightStartLocation = (FVector_NetQuantize100)loc;
+            {
+                FVector_NetQuantize100 flightStart{};
+                static_cast<FVector&>(flightStart) = loc;
+                aircraft->FlightInfo.FlightStartLocation = flightStart;
+            }
             aircraft->FlightInfo.TimeTillFlightEnd = 7.f;
             aircraft->FlightInfo.TimeTillDropEnd = 0.f;
             aircraft->FlightInfo.TimeTillDropStart = 0.f;

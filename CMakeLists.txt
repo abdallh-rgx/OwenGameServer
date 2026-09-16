@@ -46,7 +46,11 @@ target_include_directories(gameserver PRIVATE
     ${CMAKE_SOURCE_DIR}/external/curl/include
 )
 
-target_precompile_headers(gameserver PRIVATE ${CMAKE_SOURCE_DIR}/src/pch.h)
+# NOTE: A precompiled header for the full Dumper-7 SDK (~200 MB of headers, 60k+
+# types) needs several GB of RAM to serialize with clang, which can exhaust
+# GitHub Actions runners. Every translation unit already includes "pch.h"
+# directly, so the build works without a PCH and stays within memory limits.
+# target_precompile_headers(gameserver PRIVATE ${CMAKE_SOURCE_DIR}/src/pch.h)
 
 target_link_libraries(gameserver
     dobby

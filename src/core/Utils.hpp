@@ -6,10 +6,9 @@
 #include "AndroidBase.hpp"
 #include "FName.hpp"
 
-class UObject;
-class UClass;
-class AActor;
-class UFunction;
+// UObject/UClass/AActor/UFunction come from the SDK (include/SDK.hpp) and are
+// visible through `using namespace SDK;` in pch.h. Re-declaring them in the
+// global namespace would make every unqualified use ambiguous.
 
 struct FVectorLocal {
     double X, Y, Z;
@@ -74,6 +73,27 @@ using UEAllocatedVector = std::vector<T>;
 using UEAllocatedString = std::string;
 using UEAllocatedWString = std::wstring;
 
+inline bool operator==(const FGuid& a, const FGuid& b) {
+    return a.A == b.A && a.B == b.B && a.C == b.C && a.D == b.D;
+}
+inline bool operator!=(const FGuid& a, const FGuid& b) {
+    return !(a == b);
+}
+
+void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj);
+
+template<typename T>
+inline TWeakObjectPtr<T> MakeWeakPtr(T* obj) {
+    TWeakObjectPtr<T> wp{};
+    MakeWeakPtrInto(wp, obj);
+    return wp;
+}
+
+inline std::wstring FNameToWString(const FName& name) {
+    std::string s = name.ToString();
+    return std::wstring(s.begin(), s.end());
+}
+
 class Utils {
 public:
     static UObject* FindObject(const wchar_t* path, UClass* cls = nullptr);
@@ -113,6 +133,13 @@ public:
     static std::vector<T*> GetAll() {
         std::vector<T*> out;
         for (AActor* a : GetAllActors(T::StaticClass())) out.push_back((T*)a);
+        return out;
+    }
+
+    template <typename T = AActor>
+    static std::vector<T*> GetAll(UClass* cls) {
+        std::vector<T*> out;
+        for (AActor* a : GetAllActors(cls)) out.push_back((T*)a);
         return out;
     }
 

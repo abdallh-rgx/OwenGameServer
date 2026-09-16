@@ -51,9 +51,9 @@ void GameMode::SetPlaylist(AFortGameModeAthena* gameMode) {
         gameState->SetIsDBNODeathEnabled(true);
     }
 
-    gameMode->AISettings = playlist->AISettings;
+    gameMode->AISettings = playlist->AISettings.Get();
 
-    LOGI("[GameMode] Playlist set: %s", gameState->CurrentPlaylistName.ToString().c_str());
+    LOGI("[GameMode] Playlist set: %s", gameMode->CurrentPlaylistName.ToString().c_str());
 }
 
 static bool bReady = false;
@@ -171,9 +171,9 @@ void GameMode::ReadyToStartMatch(UObject* context, Params::AGameMode_ReadyToStar
             if (auto gameFeatureData = CastSDK<UFortGameFeatureData>(object)) {
                 auto& lootTableData = gameFeatureData->DefaultLootTableData;
 
-                std::wstring ltdPath = lootTableData.LootTierData.ObjectID.AssetPathName.ToWString();
-                std::wstring abilitySetPath = gameFeatureData->PlayerAbilitySet.ObjectID.AssetPathName.ToWString();
-                std::wstring lpdPath = lootTableData.LootPackageData.ObjectID.AssetPathName.ToWString();
+                std::wstring ltdPath = FNameToWString(lootTableData.LootTierData.ObjectID.AssetPathName);
+                std::wstring abilitySetPath = FNameToWString(gameFeatureData->PlayerAbilitySet.ObjectID.AssetPathName);
+                std::wstring lpdPath = FNameToWString(lootTableData.LootPackageData.ObjectID.AssetPathName);
 
                 auto abilitySet = Utils::Find<UFortAbilitySet>(abilitySetPath.c_str());
                 auto ltdFeatureData = Utils::Find<UDataTable>(ltdPath.c_str());

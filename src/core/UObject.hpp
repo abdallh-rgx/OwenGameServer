@@ -4,9 +4,10 @@
 #include "Offsets.hpp"
 #include "AndroidBase.hpp"
 
-class UObject;
-class UClass;
-class UFunction;
+// UObject/UClass/UFunction come from the SDK (include/SDK.hpp) and are visible
+// through `using namespace SDK;` in pch.h. Re-declaring them in the global
+// namespace would make every unqualified use ambiguous, so no forward
+// declarations are made here.
 
 using ProcessEvent_t = void(*)(UObject*, UFunction*, void*);
 
@@ -45,6 +46,28 @@ inline int32_t GObjectsNum() {
     ReadGObjectsHeader(GObjectsLayout.Padded, maxE, numE, &objs);
     if (numE < 0 || numE > 4000000) return 0;
     return numE;
+}
+
+inline uint8_t* GetItemByIndex(int32_t index) {
+    if (!GObjectsLayout.Initialized) return nullptr;
+    if (index < 0) return nullptr;
+
+    uint8_t* base = GObjectsBase();
+    uint64_t objectsField = GObjectsLayout.Padded ? 0x10 : 0x00;
+
+    void** chunks = *(void***)(base + objectsField);
+    if (!chunks) return nullptr;
+
+    int32_t perChunk = GObjectsLayout.ElementsPerChunk;
+    if (perChunk <= 0) perChunk = 0x10000;
+
+    int32_t chunkIdx = index / perChunk;
+    int32_t within = index % perChunk;
+
+    uint8_t* chunk = (uint8_t*)chunks[chunkIdx];
+    if (!chunk) return nullptr;
+
+    return chunk + (uint64_t)within * 0x18;
 }
 
 inline UObject* GetObjectByIndex(int32_t index) {
@@ -119,9 +142,9 @@ class UObjectManager {
 public:
     static int32_t Num();
     static UObject* GetByIndex(int32_t index);
-    static UObject* Find(const wchar_t* path, UClass* cls);
-    static UObject* Load(const wchar_t* path, UClass* cls);
-    static UObject* FindOrLoad(const wchar_t* path, UClass* cls);
+    static UObject* Find(const wchar_t* path, UClass* cls = nullptr);
+    static UObject* Load(const wchar_t* path, UClass* cls = nullptr);
+    static UObject* FindOrLoad(const wchar_t* path, UClass* cls = nullptr);
 };
 
 extern ProcessEvent_t ProcessEventPtr;

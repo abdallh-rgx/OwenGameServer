@@ -1,7 +1,7 @@
 #include "pch.h"
 #include "API.hpp"
 #include "options.h"
-#include <curl.h>
+#include <curl/curl.h>
 
 size_t API::CallBack(void* ptr, size_t size, size_t nmemb, std::string* data) {
     data->append((char*)ptr, size * nmemb);

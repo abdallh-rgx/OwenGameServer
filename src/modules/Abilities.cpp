@@ -4,7 +4,7 @@
 #include "UObject.hpp"
 #include "FName.hpp"
 
-void Abilities::GiveAbility(UAbilitySystemComponent* asc, UObject* ability) {
+FGameplayAbilitySpecHandle Abilities::GiveAbility(UAbilitySystemComponent* asc, UObject* ability) {
     if (!asc || !ability) return;
 
     FGameplayAbilitySpec spec{};
@@ -19,6 +19,7 @@ void Abilities::GiveAbility(UAbilitySystemComponent* asc, UObject* ability) {
 
     FGameplayAbilitySpecHandle outHandle{};
     giveAbility(asc, &outHandle, std::move(spec));
+    return outHandle;
 }
 
 void Abilities::GiveAbilitySet(UAbilitySystemComponent* asc, UFortAbilitySet* set) {

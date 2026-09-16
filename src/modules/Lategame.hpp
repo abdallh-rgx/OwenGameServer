@@ -23,5 +23,5 @@ public:
     static FLategameItem GetSnipers();
     static FLategameItem GetHeals();
     static UFortAmmoItemDefinition* GetAmmo(EAmmoType ammoType);
-    static UFortResourceItemDefinition* GetResource(EFortResourceType resourceType);
+    static UFortResourceItemDefinition* GetResource(EEFortResourceType resourceType);
 };

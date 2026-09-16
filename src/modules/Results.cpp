@@ -2,7 +2,7 @@
 #include "Results.hpp"
 #include "API.hpp"
 #include "options.h"
-#include <curl.h>
+#include <curl/curl.h>
 
 void Results::SendBattleRoyaleResult(const std::string& username, int placement, int elims, int xp, int startingCount) {
     const std::string url = BackendUrl + "/fortnite/api/game/v2/profile/" + username + "/dedicated_server/EndBattleRoyaleGameV2?profileId=athena";

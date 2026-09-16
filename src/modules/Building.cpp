@@ -6,7 +6,6 @@
 #include "UObject.hpp"
 #include "FName.hpp"
 
-X(ABuildingSMActor*, float, FGameplayTagContainer, FVector, FHitResult, AFortPlayerControllerAthena*, AActor*, FGameplayEffectContextHandle) = nullptr;
 
 bool Building::CanBePlacedByPlayer(UClass* buildClass) {
     auto gameState = (AFortGameStateAthena*)UWorld::GetWorld()->GameState;
@@ -15,10 +14,10 @@ bool Building::CanBePlacedByPlayer(UClass* buildClass) {
 }
 
 static void SetEditingPlayer(ABuildingSMActor* building, AFortPlayerStateZone* newEditingPlayer) {
-    if (building->Role != ENetRole::ROLE_Authority || (building->EditingPlayer && newEditingPlayer))
+    if (building->Role != EENetRole::ROLE_Authority || (building->EditingPlayer && newEditingPlayer))
         return;
 
-    building->SetNetDormancy(ENetDormancy((2 - (newEditingPlayer != 0))));
+    building->SetNetDormancy(EENetDormancy((2 - (newEditingPlayer != 0))));
     building->ForceNetUpdate();
 
     if (building->EditingPlayer) {
@@ -264,13 +263,13 @@ void Building::ServerSpawnDeco(UObject* context, Params::AFortDecoTool_ServerSpa
     }
 }
 
-static EEFortBuildingType GetBuildingTypeFromBuildingAttachmentType(EBuildingAttachmentType buildingAttachmentType) {
+static EEFortBuildingType GetBuildingTypeFromBuildingAttachmentType(EEBuildingAttachmentType buildingAttachmentType) {
     if (uint8_t(buildingAttachmentType) <= 7) {
         uint32_t val = 0xC5;
         if (val & (1u << uint8_t(buildingAttachmentType)))
             return EEFortBuildingType::Floor;
     }
-    if (buildingAttachmentType == EBuildingAttachmentType::ATTACH_Wall)
+    if (buildingAttachmentType == EEBuildingAttachmentType::ATTACH_Wall)
         return EEFortBuildingType::Wall;
     return EEFortBuildingType::None;
 }

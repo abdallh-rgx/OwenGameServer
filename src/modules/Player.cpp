@@ -133,7 +133,7 @@ void Player::ServerPlayEmoteItem(UObject* context, Params::AFortPlayerController
     if (abilityToUse && abilitySystemComponent) {
         FGameplayAbilitySpecHandle handle = Abilities::GiveAbility(abilitySystemComponent, abilityToUse);
         FPredictionKey predictionKey{};
-        abilitySystemComponent->ServerTryActivateAbility(handle, true, predictionKey, nullptr);
+        abilitySystemComponent->ServerTryActivateAbility(handle, true, predictionKey);
     }
 }
 
@@ -175,9 +175,9 @@ void Player::ServerHandlePickupInfo(UObject* context, Params::AFortPlayerPawn_Se
 
     pickup->PickupLocationData.bPlayPickupSound = params->Params_0.bPlayPickupSound;
     pickup->PickupLocationData.FlyTime = 0.4f;
-    pickup->PickupLocationData.ItemOwner = pawn;
+    pickup->PickupLocationData.ItemOwner = MakeWeakPtr(static_cast<AFortPawn*>(pawn));
     pickup->PickupLocationData.PickupGuid = pickup->PrimaryPickupItemEntry.ItemGuid;
-    pickup->PickupLocationData.PickupTarget = pawn;
+    pickup->PickupLocationData.PickupTarget = MakeWeakPtr(static_cast<AFortPawn*>(pawn));
     pickup->OnRep_PickupLocationData();
 
     pickup->bPickedUp = true;
@@ -394,9 +394,9 @@ void Player::ClientOnPawnDied(AFortPlayerControllerAthena* playerController, FFo
     playerState->DeathInfo.DeathLocation = playerState->PawnDeathLocation;
     playerState->DeathInfo.DeathTags = playerController->MyFortPawn ? playerController->MyFortPawn->GameplayTags : deathReport.Tags;
     playerState->DeathInfo.DeathCause = AFortPlayerStateAthena::ToDeathCause(playerState->DeathInfo.DeathTags, playerState->DeathInfo.bDBNO);
-    playerState->DeathInfo.Downer = killerPlayerState;
-    playerState->DeathInfo.FinisherOrDowner = killerPlayerState ? killerPlayerState : playerState;
-    playerState->DeathInfo.Distance = playerController->MyFortPawn ? (playerState->DeathInfo.DeathCause != EEDeathCause::FallDamage ? (killerPawn ? killerPawn->GetDistanceTo(playerController->MyFortPawn) : 0) : playerController->MyFortPawn->LastFallDistance) : 0;
+    playerState->DeathInfo.Downer = MakeWeakPtr(static_cast<AActor*>(killerPlayerState));
+    playerState->DeathInfo.FinisherOrDowner = MakeWeakPtr(static_cast<AActor*>(killerPlayerState ? killerPlayerState : playerState));
+    playerState->DeathInfo.Distance = playerController->MyFortPawn ? (playerState->DeathInfo.DeathCause != EEDeathCause::FallDamage ? (killerPawn ? killerPawn->GetDistanceTo(playerController->MyFortPawn) : 0) : ((AFortPlayerPawnAthena*)playerController->MyFortPawn)->LastFallDistance) : 0;
     playerState->DeathInfo.bInitialized = true;
     playerState->OnRep_DeathInfo();
 

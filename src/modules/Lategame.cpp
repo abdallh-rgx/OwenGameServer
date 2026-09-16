@@ -63,7 +63,7 @@ UFortAmmoItemDefinition* Lategame::GetAmmo(EAmmoType ammoType) {
     return ammos[idx];
 }
 
-UFortResourceItemDefinition* Lategame::GetResource(EFortResourceType resourceType) {
+UFortResourceItemDefinition* Lategame::GetResource(EEFortResourceType resourceType) {
     static std::vector<UFortResourceItemDefinition*> res{
         Utils::Find<UFortResourceItemDefinition>(L"/Game/Items/ResourcePickups/WoodItemData.WoodItemData"),
         Utils::Find<UFortResourceItemDefinition>(L"/Game/Items/ResourcePickups/StoneItemData.StoneItemData"),

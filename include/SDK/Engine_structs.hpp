@@ -1155,7 +1155,7 @@ enum class EEEvaluatorMode : uint8
 	EM_Standard = 0,
 	EM_Freeze = 1,
 	EM_DelayedFreeze = 2,
-	EM_MAX = 3,
+	EM_MAX_1 = 3,
 };
 
 // Enum Engine.AnimPhysTwistAxis

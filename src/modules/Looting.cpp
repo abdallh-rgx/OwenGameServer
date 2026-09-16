@@ -45,7 +45,7 @@ static void SetupLDSForPackage(std::vector<FFortItemEntry>& lootDrops, FName pac
         return;
     }
 
-    std::wstring itemDefPath = lootPackage->ItemDefinition.ObjectID.AssetPathName.ToWString();
+    std::wstring itemDefPath = FNameToWString(lootPackage->ItemDefinition.ObjectID.AssetPathName);
     auto id = Utils::Find<UFortItemDefinition>(itemDefPath.c_str());
     auto itemDefinition = CastSDK<UFortWorldItemDefinition>(id);
     if (!itemDefinition) return;
@@ -170,7 +170,7 @@ std::vector<FFortItemEntry> Looting::ChooseLootForContainer(FName tierGroup, int
         std::string ammoFullName = ammoDefinition->GetFullName();
         std::wstring ammoPath(ammoFullName.begin(), ammoFullName.end());
         for (auto const& val : LPGroupsAll) {
-            if (val->LootPackageID == ammoSmall && val->ItemDefinition.ObjectID.AssetPathName.ToWString().find(ammoPath) != std::wstring::npos) {
+            if (val->LootPackageID == ammoSmall && FNameToWString(val->ItemDefinition.ObjectID.AssetPathName).find(ammoPath) != std::wstring::npos) {
                 group = val;
                 break;
             }
@@ -232,7 +232,7 @@ void Looting::ServerAttemptInteract(UObject* context, Params::UFortControllerCom
         return;
     }
 
-    Sarah::CallProcessEvent(context, Sarah::UObjectManager::Find(L"/Script/FortniteGame.FortControllerComponent_Interaction.ServerAttemptInteract"), params);
+    Sarah::CallProcessEvent(context, (UFunction*)Sarah::UObjectManager::Find(L"/Script/FortniteGame.FortControllerComponent_Interaction.ServerAttemptInteract"), params);
 }
 
 bool Looting::PickLootDrops(UObject* context, Params::UFortKismetLibrary_PickLootDrops* params) {
@@ -259,8 +259,8 @@ AFortPickup* Looting::K2_SpawnPickupInWorld(UObject* context, Params::UFortKisme
 }
 
 AFortPickup* Looting::SpawnItemVariantPickupInWorld(UObject* context, Params::UFortKismetLibrary_SpawnItemVariantPickupInWorld* params) {
-    return Inventory::SpawnPickup(params->Params.Position, params->Params.WorldItemDefinition, params->Params.NumberToSpawn, 0,
-        params->Params.SourceType, params->Params.Source, nullptr, params->Params.bToss, params->Params.bRandomRotation);
+    return Inventory::SpawnPickup(params->Params_0.Position, params->Params_0.WorldItemDefinition, params->Params_0.NumberToSpawn, 0,
+        params->Params_0.SourceType, params->Params_0.Source, nullptr, params->Params_0.bToss, params->Params_0.bRandomRotation);
 }
 
 AFortPickup* Looting::SupplyDropSpawnPickup(UObject* context, Params::AFortAthenaSupplyDrop_SpawnPickup* params) {
