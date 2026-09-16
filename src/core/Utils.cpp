@@ -186,39 +186,17 @@ void Utils::MarkArrayDirty(FFastArraySerializer& serializer) {
 }
 
 FName MakeFName(const wchar_t* name) {
-    FName empty{};
-    empty.ComparisonIndex = 0;
-
-    if (!name) return empty;
-
-    static UObject* lib = nullptr;
-    static UFunction* convFunc = nullptr;
-    static bool initialized = false;
-
-    if (!initialized) {
-        initialized = true;
-        lib = Sarah::UObjectManager::Find(L"/Script/Engine.Default__KismetStringLibrary");
-        if (lib) {
-            convFunc = (UFunction*)Sarah::UObjectManager::Find(L"/Script/Engine.KismetStringLibrary.Conv_StringToName");
-        }
-        LOGI("[FNAME] StringLib=%p ConvFunc=%p", lib, convFunc);
+    if (!name) {
+        FName empty{};
+        empty.ComparisonIndex = 0;
+        return empty;
     }
-
-    if (!lib || !convFunc) return empty;
 
     std::u16string u16 = WToU16(name);
     FString fs;
     for (char16_t c : u16) fs.Add(c);
 
-    struct FConvStringToNameParams {
-        FString InString;
-        FName   ReturnValue;
-    };
-    FConvStringToNameParams p{};
-    p.InString = fs;
-
-    Sarah::CallProcessEvent(lib, convFunc, &p);
-    return p.ReturnValue;
+    return UKismetStringLibrary::Conv_StringToName(fs);
 }
 
 uint32_t MakeFNameIndex(const wchar_t* name) {
