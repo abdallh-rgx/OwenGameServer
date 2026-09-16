@@ -59,7 +59,37 @@ TUObjectArray* InSDKUtils::GetGObjects() {
 }
 
 std::string InSDKUtils::GetNameByIndex(int32 Index) {
-    return Sarah::FNameReader::ToUtf8(Index);
+    if (Index <= 0) return "";
+
+    static UObject* lib = nullptr;
+    static UFunction* convFunc = nullptr;
+    static bool initialized = false;
+
+    if (!initialized) {
+        initialized = true;
+        lib = Sarah::UObjectManager::Find(L"/Script/Engine.Default__KismetStringLibrary");
+        if (lib) {
+            convFunc = (UFunction*)Sarah::UObjectManager::Find(L"/Script/Engine.KismetStringLibrary.Conv_NameToString");
+        }
+    }
+
+    if (!lib || !convFunc) return "";
+
+    FName inName{};
+    inName.ComparisonIndex = Index;
+    inName.Number = 0;
+
+    struct FConvNameToStringParams {
+        FName   InName;
+        FString ReturnValue;
+    };
+    FConvNameToStringParams p{};
+    p.InName = inName;
+
+    Sarah::CallProcessEvent(lib, convFunc, &p);
+
+    if (p.ReturnValue.NumElements == 0) return "";
+    return p.ReturnValue.ToString();
 }
 
 UObject* InSDKUtils::GetObjectByIndex(int32 Index) {
@@ -93,14 +123,11 @@ class UObject* BasicFilesImplUtils::GetObjectByIndex(int32 Index) {
 UFunction* BasicFilesImplUtils::FindFunctionByFName(const FName* Name) {
     for (int i = 0; i < InSDKUtils::GetGObjects()->Num(); ++i) {
         UObject* Object = InSDKUtils::GetObjectByIndex(i);
-
         if (!Object)
             continue;
-
         if (Object->Name == *Name)
             return static_cast<UFunction*>(Object);
     }
-
     return nullptr;
 }
 
@@ -113,6 +140,5 @@ FName BasicFilesImplUtils::StringToName(const TCHAR* Name) {
 class UObject* BasicFilesImplUtils::GetDefaultObjectImpl(UClass* Class) {
     if (Class)
         return Class->ClassDefaultObject;
-
     return nullptr;
 }
