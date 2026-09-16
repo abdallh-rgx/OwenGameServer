@@ -90,6 +90,8 @@ target_link_options(gameserver PRIVATE
 target_link_libraries(gameserver
     dobby
     curl
+    log
+    android
     z
     dl
 )
