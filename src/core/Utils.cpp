@@ -188,7 +188,6 @@ void Utils::MarkArrayDirty(FFastArraySerializer& serializer) {
 FName MakeFName(const wchar_t* name) {
     FName empty{};
     empty.ComparisonIndex = 0;
-    empty.Number = 0;
 
     if (!name) return empty;
 
