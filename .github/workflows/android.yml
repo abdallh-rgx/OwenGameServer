@@ -34,7 +34,9 @@ jobs:
             ..
 
       - name: Build
-        run: cmake --build build -j 4
+        # -j 2: each clang invocation compiling the ~200 MB Dumper-7 SDK needs
+        # roughly 2 GB of RAM; 4 parallel jobs OOM-kill the 7 GB hosted runner.
+        run: cmake --build build -j 2
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
