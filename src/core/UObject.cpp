@@ -77,7 +77,6 @@ std::string InSDKUtils::GetNameByIndex(int32 Index) {
 
     FName inName{};
     inName.ComparisonIndex = Index;
-    inName.Number = 0;
 
     struct FConvNameToStringParams {
         FName   InName;
@@ -88,7 +87,7 @@ std::string InSDKUtils::GetNameByIndex(int32 Index) {
 
     Sarah::CallProcessEvent(lib, convFunc, &p);
 
-    if (p.ReturnValue.NumElements == 0) return "";
+    if (p.ReturnValue.Num() == 0) return "";
     return p.ReturnValue.ToString();
 }
 
