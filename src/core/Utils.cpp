@@ -135,8 +135,11 @@ void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj) {
 FString Utils::ToFString(const std::wstring& s) {
     std::u16string u16 = WToU16(s);
     u16.push_back(u'\0');
+
     FString result;
-    for (char16_t c : u16) result.Add(c);
+    result.Data = (wchar_t*)u16.data();
+    result.NumElements = (int32)u16.size();
+    result.MaxElements = (int32)u16.size();
     return result;
 }
 
@@ -186,17 +189,23 @@ void Utils::MarkArrayDirty(FFastArraySerializer& serializer) {
 }
 
 FName MakeFName(const wchar_t* name) {
-    if (!name) {
-        FName empty{};
-        empty.ComparisonIndex = 0;
-        return empty;
-    }
+    FName empty{};
+    empty.ComparisonIndex = 0;
+
+    if (!name) return empty;
 
     std::u16string u16 = WToU16(name);
-    FString fs;
-    for (char16_t c : u16) fs.Add(c);
+    u16.push_back(u'\0');
 
-    return UKismetStringLibrary::Conv_StringToName(fs);
+    FString fs;
+    fs.Data = (wchar_t*)u16.data();
+    fs.NumElements = (int32)u16.size();
+    fs.MaxElements = (int32)u16.size();
+
+    FName result = UKismetStringLibrary::Conv_StringToName(fs);
+
+    LOGI("[FNAME] '%ls' -> index=%d", name, result.ComparisonIndex);
+    return result;
 }
 
 uint32_t MakeFNameIndex(const wchar_t* name) {
