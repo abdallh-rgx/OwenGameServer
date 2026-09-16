@@ -61,34 +61,12 @@ TUObjectArray* InSDKUtils::GetGObjects() {
 std::string InSDKUtils::GetNameByIndex(int32 Index) {
     if (Index <= 0) return "";
 
-    static UObject* lib = nullptr;
-    static UFunction* convFunc = nullptr;
-    static bool initialized = false;
-
-    if (!initialized) {
-        initialized = true;
-        lib = Sarah::UObjectManager::Find(L"/Script/Engine.Default__KismetStringLibrary");
-        if (lib) {
-            convFunc = (UFunction*)Sarah::UObjectManager::Find(L"/Script/Engine.KismetStringLibrary.Conv_NameToString");
-        }
-    }
-
-    if (!lib || !convFunc) return "";
-
     FName inName{};
     inName.ComparisonIndex = Index;
 
-    struct FConvNameToStringParams {
-        FName   InName;
-        FString ReturnValue;
-    };
-    FConvNameToStringParams p{};
-    p.InName = inName;
-
-    Sarah::CallProcessEvent(lib, convFunc, &p);
-
-    if (p.ReturnValue.Num() == 0) return "";
-    return p.ReturnValue.ToString();
+    FString result = UKismetStringLibrary::Conv_NameToString(inName);
+    if (result.Num() == 0) return "";
+    return result.ToString();
 }
 
 UObject* InSDKUtils::GetObjectByIndex(int32 Index) {
