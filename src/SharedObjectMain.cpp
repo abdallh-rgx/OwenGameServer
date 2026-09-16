@@ -473,19 +473,12 @@ static void MainThread() {
         LOGF("[CORE] GObjects Num = %d", Sarah::UObjectManager::Num());
     }
 
-    LOGF("[CORE] Initializing FName");
+LOGF("[CORE] Initializing FName via engine");
 
-    if (!Sarah::InitFNameRuntime()) {
-        LOGF("[CORE] FName pool validation FAILED");
-    } else {
-        int noneIdx = Sarah::FNameReader::FindByName(L"None");
-
-        LOGF("[CORE] FName pool OK shift=%d blocks=0x%lx ptrMember=%d None=%d",
-             Sarah::FNameRT.LenShift,
-             Sarah::FNameRT.BlocksOffset,
-             (int)Sarah::FNameRT.BlocksArePointerMember,
-             noneIdx);
-    }
+{
+    FName noneName = MakeFName(L"None");
+    LOGF("[CORE] FName None index=%d", noneName.ComparisonIndex);
+}
 
     LOGF("[CORE] Before SetDedicatedServerMode");
     LOGF("[CORE] GIsEditor=%d GIsClient=%d GIsServer=%d",
