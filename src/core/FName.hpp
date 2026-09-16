@@ -15,8 +15,8 @@ struct FNameEntryHeader {
 
 struct FNameRuntime {
     int LenShift = 1;
-    uint64_t BlocksOffset = 0x10;
-    uint64_t CursorOffset = 0xC;
+    uint64_t BlocksOffset = 0x40;
+    uint64_t CursorOffset = 0x3C;
     bool BlocksArePointerMember = false;
     bool Initialized = false;
     bool Valid = false;
@@ -24,27 +24,42 @@ struct FNameRuntime {
 
 inline FNameRuntime FNameRT;
 
+inline bool IsReadablePointer(uintptr_t p) {
+    if (p < 0x1000) return false;
+    uintptr_t start = Sarah::ImageBase;
+    uintptr_t end   = Sarah::ImageBase + 0x40000000ULL;
+    return p >= start && p < end;
+}
+
 inline void* FNameBlockPtr(uint32_t blockIndex) {
     uintptr_t pool = Sarah::ImageBase + Off::GNames;
+
     if (FNameRT.BlocksArePointerMember) {
         uintptr_t blocksArray = *(uintptr_t*)(pool + FNameRT.BlocksOffset);
-        if (!blocksArray) return nullptr;
-        return *(void**)(blocksArray + (uint64_t)blockIndex * 8);
+        if (!blocksArray || !IsReadablePointer(blocksArray)) return nullptr;
+        void* blockPtr = *(void**)(blocksArray + (uint64_t)blockIndex * 8);
+        if (!blockPtr || !IsReadablePointer((uintptr_t)blockPtr)) return nullptr;
+        return blockPtr;
     }
-    return *(void**)(pool + FNameRT.BlocksOffset + (uint64_t)blockIndex * 8);
+
+    void* blockPtr = *(void**)(pool + FNameRT.BlocksOffset + (uint64_t)blockIndex * 8);
+    if (!blockPtr || !IsReadablePointer((uintptr_t)blockPtr)) return nullptr;
+    return blockPtr;
 }
 
 inline bool FNameValidateEntry0(int lenShift, uint64_t blocksOffset, uint64_t cursorOffset, bool pointerMember) {
     uintptr_t pool = Sarah::ImageBase + Off::GNames;
     void* block0 = nullptr;
+
     if (pointerMember) {
         uintptr_t arr = *(uintptr_t*)(pool + blocksOffset);
-        if (!arr) return false;
+        if (!arr || !IsReadablePointer(arr)) return false;
         block0 = *(void**)arr;
     } else {
         block0 = *(void**)(pool + blocksOffset);
     }
-    if (!block0) return false;
+
+    if (!block0 || !IsReadablePointer((uintptr_t)block0)) return false;
 
     FNameEntryHeader header = *(FNameEntryHeader*)block0;
     if (header.IsWide()) return false;
@@ -64,12 +79,12 @@ inline bool InitFNameRuntime() {
     };
 
     const FCandidate candidates[] = {
-        {1, 0x10, 0xC, false},
         {1, 0x40, 0x3C, false},
         {1, 0x40, 0x3C, true},
-        {6, 0x10, 0xC, false},
+        {1, 0x10, 0xC,  false},
         {6, 0x40, 0x3C, false},
         {6, 0x40, 0x3C, true},
+        {6, 0x10, 0xC,  false},
     };
 
     for (const auto& c : candidates) {
@@ -85,8 +100,8 @@ inline bool InitFNameRuntime() {
     }
 
     FNameRT.LenShift = 1;
-    FNameRT.BlocksOffset = 0x10;
-    FNameRT.CursorOffset = 0xC;
+    FNameRT.BlocksOffset = 0x40;
+    FNameRT.CursorOffset = 0x3C;
     FNameRT.BlocksArePointerMember = false;
     FNameRT.Initialized = true;
     FNameRT.Valid = false;
@@ -100,10 +115,11 @@ public:
 
     static void* GetEntryAddress(int32_t comparisonIndex) {
         if (comparisonIndex <= 0) return nullptr;
-        if (!FNameRT.Initialized && !InitFNameRuntime()) return nullptr;
+        if (!FNameRT.Initialized) InitFNameRuntime();
+        if (!FNameRT.Valid) return nullptr;
 
         uint32_t blockIdx = (uint32_t)comparisonIndex >> BlockBits;
-        uint32_t offset = (uint32_t)comparisonIndex & (BlockSize - 1);
+        uint32_t offset   = (uint32_t)comparisonIndex & (BlockSize - 1);
 
         void* block = FNameBlockPtr(blockIdx);
         if (!block) return nullptr;
@@ -113,7 +129,7 @@ public:
 
     static std::u16string ToStringU16(int32_t comparisonIndex) {
         uint8_t* addr = (uint8_t*)GetEntryAddress(comparisonIndex);
-        if (!addr) return {};
+        if (!addr || !IsReadablePointer((uintptr_t)addr)) return {};
 
         FNameEntryHeader header = *(FNameEntryHeader*)addr;
         int len = header.Length(FNameRT.LenShift);
@@ -133,16 +149,18 @@ public:
     }
 
     static int32_t MaxIndex() {
-        if (!FNameRT.Initialized && !InitFNameRuntime()) return 0;
+        if (!FNameRT.Initialized) InitFNameRuntime();
+        if (!FNameRT.Valid) return 0;
+
         uintptr_t pool = Sarah::ImageBase + Off::GNames;
-        uint32_t cursor = *(uint32_t*)(pool + FNameRT.CursorOffset);
+        uint32_t cursor       = *(uint32_t*)(pool + FNameRT.CursorOffset);
         uint32_t currentBlock = *(uint32_t*)(pool + FNameRT.CursorOffset - 4);
         return (int32_t)((currentBlock << BlockBits) + (cursor >> 1));
     }
 
     static int32_t FindByName(const wchar_t* target) {
         if (!target) return 0;
-        if (!FNameRT.Initialized && !InitFNameRuntime()) return 0;
+        if (!FNameRT.Initialized) InitFNameRuntime();
         if (!FNameRT.Valid) return 0;
 
         std::u16string needle = WToU16(target);
@@ -150,7 +168,7 @@ public:
 
         for (int i = 1; i < total; i++) {
             uint8_t* addr = (uint8_t*)GetEntryAddress(i);
-            if (!addr) continue;
+            if (!addr || !IsReadablePointer((uintptr_t)addr)) continue;
 
             FNameEntryHeader header = *(FNameEntryHeader*)addr;
             int len = header.Length(FNameRT.LenShift);
