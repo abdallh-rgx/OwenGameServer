@@ -220,41 +220,47 @@ FName MakeFName(const wchar_t* name) {
     std::u16string needle = WToU16(name);
     int32_t found = 0;
 
-    const uint32_t MaxScan = 500000;
-    for (uint32_t i = 1; i < MaxScan; i++) {
-        uint32_t blockIdx = i >> 16;
-        uint32_t offset   = i & 0xFFFF;
+    uint32_t emptyBlocks = 0;
+    const uint32_t MaxBlocks = 64;
 
+    for (uint32_t blockIdx = 0; blockIdx < MaxBlocks; blockIdx++) {
         uintptr_t blockPtrAddr = pool + 0x40 + (uint64_t)blockIdx * 8;
         uintptr_t block = *(uintptr_t*)blockPtrAddr;
-        if (!block) continue;
+        if (!block) {
+            if (++emptyBlocks >= 3) break;
+            continue;
+        }
+        emptyBlocks = 0;
 
-        uintptr_t entry = block + (uint64_t)offset * 4;
-        uint16_t header = *(uint16_t*)entry;
-        int len = header >> 6;
-        if (len <= 0 || len > 200) continue;
-        if ((size_t)len != needle.size()) continue;
+        for (uint32_t byteOffset = 0; byteOffset < 0xFFFF; byteOffset++) {
+            uintptr_t entry = block + byteOffset;
+            uint16_t header = *(uint16_t*)entry;
+            int len = header >> 6;
+            if (len <= 0 || len > 500) continue;
+            if ((size_t)len != needle.size()) continue;
 
-        if (header & 1) {
-            const char16_t* str = (const char16_t*)(entry + 4);
-            if (memcmp(str, needle.data(), (size_t)len * 2) == 0) {
-                found = (int32_t)i;
-                break;
-            }
-        } else {
-            const char* str = (const char*)(entry + 4);
-            bool match = true;
-            for (int j = 0; j < len; j++) {
-                if ((char16_t)(unsigned char)str[j] != needle[j]) {
-                    match = false;
+            if (header & 1) {
+                const char16_t* str = (const char16_t*)(entry + 4);
+                if (memcmp(str, needle.data(), (size_t)len * 2) == 0) {
+                    found = (int32_t)((blockIdx << 16) | byteOffset);
+                    break;
+                }
+            } else {
+                const char* str = (const char*)(entry + 4);
+                bool match = true;
+                for (int j = 0; j < len; j++) {
+                    if ((char16_t)(unsigned char)str[j] != needle[j]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    found = (int32_t)((blockIdx << 16) | byteOffset);
                     break;
                 }
             }
-            if (match) {
-                found = (int32_t)i;
-                break;
-            }
         }
+        if (found) break;
     }
 
     {
