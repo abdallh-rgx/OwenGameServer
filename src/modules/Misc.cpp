@@ -28,7 +28,7 @@ namespace {
 }
 
 int Misc::GetNetMode(void* world) {
-    return 1;
+    return 2;
 }
 
 void Misc::TickFlush(void* driver, float dt) {
@@ -39,17 +39,32 @@ void Misc::TickFlush(void* driver, float dt) {
 
     if (!bDev) {
         static bool hasAClientConnected = false;
-        void** clientConnections = *(void***)((uint8_t*)driver + 0x90);
-        int32_t numConnections = *(int32_t*)((uint8_t*)driver + 0x98);
+        void** clientConnections = nullptr;
+        int32_t numConnections = 0;
+
+        __try {
+            clientConnections = *(void***)((uint8_t*)driver + 0x90);
+            numConnections = *(int32_t*)((uint8_t*)driver + 0x98);
+        } __except (1) {
+            clientConnections = nullptr;
+            numConnections = 0;
+        }
+
         if (!hasAClientConnected && numConnections > 0 && clientConnections != nullptr) {
             hasAClientConnected = true;
-            LOGI("[TickFlush] client connected");
+            LOGI("[TickFlush] First client connected");
+        }
+
+        if (hasAClientConnected && numConnections == 0) {
+            LOGW("[TickFlush] All clients disconnected, but staying alive (Listen mode)");
         }
     }
 
     if (!PlayersToDestroyLocked && PlayersToDestroy.size() > 0) {
         for (size_t i = 0; i < PlayersToDestroy.size(); i++) {
-            if (PlayersToDestroy[i]) PlayersToDestroy[i]->K2_DestroyActor();
+            if (PlayersToDestroy[i]) {
+                PlayersToDestroy[i]->K2_DestroyActor();
+            }
         }
         PlayersToDestroy.clear();
     }
@@ -101,6 +116,8 @@ bool Misc::StartAircraftPhase(AFortGameModeAthena* gameMode, char a2) {
 }
 
 bool Misc::Listen() {
+    LOGI("[Listen] === Starting Listen (Client+Server mode) ===");
+
     UWorld* world = UWorld::GetWorld();
     UEngine* engine = UEngine::GetEngine();
 
@@ -111,8 +128,20 @@ bool Misc::Listen() {
         return false;
     }
 
+    if (!world->PersistentLevel) {
+        LOGE("[Listen] PersistentLevel is null");
+        return false;
+    }
+
+    LOGI("[Listen] PersistentLevel=%p", world->PersistentLevel);
+
     using GetWorldCtx_t = void* (*)(void*, void*);
     GetWorldCtx_t getWorldCtx = (GetWorldCtx_t)(Sarah::ImageBase + Off::GetWorldContext);
+    if (!getWorldCtx) {
+        LOGE("[Listen] GetWorldContext is null");
+        return false;
+    }
+
     void* worldCtx = getWorldCtx(engine, world);
     if (!worldCtx) {
         LOGE("[Listen] worldCtx is null");
@@ -122,7 +151,7 @@ bool Misc::Listen() {
     LOGI("[Listen] worldCtx = %p", worldCtx);
 
     FName driverName = MakeFName(L"GameNetDriver");
-    LOGI("[Listen] FName(GameNetDriver) = %d", driverName.ComparisonIndex);
+    LOGI("[Listen] FName(GameNetDriver) index = %d", driverName.ComparisonIndex);
 
     if (driverName.ComparisonIndex == 0) {
         LOGE("[Listen] FName 'GameNetDriver' not found");
@@ -131,6 +160,12 @@ bool Misc::Listen() {
 
     using CreateND_t = void* (*)(void*, void*, FName*);
     CreateND_t createND = (CreateND_t)(Sarah::ImageBase + Off::CreateNetDriver);
+    if (!createND) {
+        LOGE("[Listen] CreateNetDriver is null");
+        return false;
+    }
+
+    LOGI("[Listen] Calling CreateNetDriver...");
     void* netDriver = createND(engine, worldCtx, &driverName);
     if (!netDriver) {
         LOGE("[Listen] CreateNetDriver failed");
@@ -146,23 +181,36 @@ bool Misc::Listen() {
         collection.NetDriver = (UNetDriver*)netDriver;
     }
 
+    LOGI("[Listen] Setting URL...");
     FURLLocal url = {};
     url.Port = g_Port;
     url.Valid = 1;
 
     using InitListen_t = bool (*)(void*, void*, FURLLocal*, bool, FStringLocal*);
     InitListen_t initListen = (InitListen_t)(Sarah::ImageBase + Off::InitListen);
+    if (!initListen) {
+        LOGE("[Listen] InitListen is null");
+        return false;
+    }
 
-    LOGI("[Listen] calling InitListen...");
+    LOGI("[Listen] Calling InitListen on port %d...", g_Port);
 
-    if (!initListen(netDriver, world, &url, false, nullptr)) {
-        LOGE("[Listen] InitListen failed");
+    bool listenOk = false;
+    __try {
+        listenOk = initListen(netDriver, world, &url, false, nullptr);
+    } __except (1) {
+        LOGE("[Listen] InitListen crashed");
+        return false;
+    }
+
+    if (!listenOk) {
+        LOGE("[Listen] InitListen returned false");
         return false;
     }
 
     world->NetDriver = (UNetDriver*)netDriver;
 
-    LOGI("[Listen] Server listening on port %d", g_Port);
+    LOGI("[Listen] === Server listening on port %d ===", g_Port);
     return true;
 }
 
@@ -170,9 +218,13 @@ void Misc::SetDynamicFoundationEnabled(UObject* context, Params::ABuildingFounda
     auto foundation = (ABuildingFoundation*)context;
     if (!foundation) return;
 
-    foundation->DynamicFoundationRepData.EnabledState = params->bEnabled ? EEDynamicFoundationEnabledState::Enabled : EEDynamicFoundationEnabledState::Disabled;
+    foundation->DynamicFoundationRepData.EnabledState = params->bEnabled
+        ? EEDynamicFoundationEnabledState::Enabled
+        : EEDynamicFoundationEnabledState::Disabled;
     foundation->OnRep_DynamicFoundationRepData();
-    foundation->FoundationEnabledState = params->bEnabled ? EEDynamicFoundationEnabledState::Enabled : EEDynamicFoundationEnabledState::Disabled;
+    foundation->FoundationEnabledState = params->bEnabled
+        ? EEDynamicFoundationEnabledState::Enabled
+        : EEDynamicFoundationEnabledState::Disabled;
 }
 
 void Misc::SetDynamicFoundationTransform(UObject* context, Params::ABuildingFoundation_SetDynamicFoundationTransform* params) {
