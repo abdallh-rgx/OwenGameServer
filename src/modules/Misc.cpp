@@ -136,67 +136,64 @@ bool Misc::StartAircraftPhase(AFortGameModeAthena* gameMode, char a2) {
 }
 
 bool Misc::Listen() {
-    MLOG("[Listen] === Starting Listen (Client+Server mode) ===");
+    MLOG("[Listen] === Starting Listen ===");
 
-    UWorld* world = UWorld::GetWorld();
-    UEngine* engine = UEngine::GetEngine();
+    MLOG("[Listen] A reading GWorld at offset 0x%llx", (unsigned long long)Off::GWorld);
+    UWorld* world = *(UWorld**)(Sarah::ImageBase + Off::GWorld);
+    MLOG("[Listen] B world=%p", world);
 
-    MLOG("[Listen] engine=%p world=%p", engine, world);
+    MLOG("[Listen] C reading GEngine at offset 0x%llx", (unsigned long long)Off::GEngine);
+    UEngine* engine = *(UEngine**)(Sarah::ImageBase + Off::GEngine);
+    MLOG("[Listen] D engine=%p", engine);
 
-    if (!engine || !world) {
-        MLOG("[Listen] engine or world is null");
+    if (!world) {
+        MLOG("[Listen] FAIL: world is null");
+        return false;
+    }
+    if (!engine) {
+        MLOG("[Listen] FAIL: engine is null");
         return false;
     }
 
-    MLOG("[Listen] step1 OK");
+    MLOG("[Listen] E world ok");
 
     if (!world->PersistentLevel) {
-        MLOG("[Listen] PersistentLevel is null");
+        MLOG("[Listen] FAIL: PersistentLevel is null");
         return false;
     }
-
-    MLOG("[Listen] step2 PersistentLevel=%p", world->PersistentLevel);
+    MLOG("[Listen] F PersistentLevel=%p", world->PersistentLevel);
 
     using GetWorldCtx_t = void* (*)(void*, void*);
     GetWorldCtx_t getWorldCtx = (GetWorldCtx_t)(Sarah::ImageBase + Off::GetWorldContext);
-    if (!getWorldCtx) {
-        MLOG("[Listen] GetWorldContext is null");
-        return false;
-    }
-
-    MLOG("[Listen] step3 calling GetWorldContext...");
+    MLOG("[Listen] G GetWorldContext fn=%p", (void*)getWorldCtx);
 
     void* worldCtx = getWorldCtx(engine, world);
+    MLOG("[Listen] H worldCtx=%p", worldCtx);
+
     if (!worldCtx) {
-        MLOG("[Listen] worldCtx is null");
+        MLOG("[Listen] FAIL: worldCtx is null");
         return false;
     }
 
-    MLOG("[Listen] step4 worldCtx = %p", worldCtx);
-
     FName driverName = MakeFName(L"GameNetDriver");
-    MLOG("[Listen] step5 FName(GameNetDriver) index = %d", driverName.ComparisonIndex);
+    MLOG("[Listen] I FName=0x%x", driverName.ComparisonIndex);
 
     if (driverName.ComparisonIndex == 0) {
-        MLOG("[Listen] FName 'GameNetDriver' not found");
+        MLOG("[Listen] FAIL: GameNetDriver name not found");
         return false;
     }
 
     using CreateND_t = void* (*)(void*, void*, FName*);
     CreateND_t createND = (CreateND_t)(Sarah::ImageBase + Off::CreateNetDriver);
-    if (!createND) {
-        MLOG("[Listen] CreateNetDriver is null");
-        return false;
-    }
+    MLOG("[Listen] J CreateNetDriver fn=%p", (void*)createND);
 
-    MLOG("[Listen] step6 calling CreateNetDriver...");
     void* netDriver = createND(engine, worldCtx, &driverName);
+    MLOG("[Listen] K netDriver=%p", netDriver);
+
     if (!netDriver) {
-        MLOG("[Listen] CreateNetDriver failed");
+        MLOG("[Listen] FAIL: CreateNetDriver returned null");
         return false;
     }
-
-    MLOG("[Listen] step7 NetDriver created = %p", netDriver);
 
     *(FName*)((uint8_t*)netDriver + 0x190) = driverName;
     *(void**)((uint8_t*)netDriver + 0x140) = world;
@@ -204,27 +201,21 @@ bool Misc::Listen() {
     for (auto& collection : world->LevelCollections) {
         collection.NetDriver = (UNetDriver*)netDriver;
     }
+    MLOG("[Listen] L collections set");
 
-    MLOG("[Listen] step8 setting URL...");
     FURLLocal url = {};
     url.Port = g_Port;
     url.Valid = 1;
 
     using InitListen_t = bool (*)(void*, void*, FURLLocal*, bool, FStringLocal*);
     InitListen_t initListen = (InitListen_t)(Sarah::ImageBase + Off::InitListen);
-    if (!initListen) {
-        MLOG("[Listen] InitListen is null");
-        return false;
-    }
-
-    MLOG("[Listen] step9 calling InitListen on port %d...", g_Port);
+    MLOG("[Listen] M InitListen fn=%p, port=%d", (void*)initListen, g_Port);
 
     bool listenOk = initListen(netDriver, world, &url, false, nullptr);
-
-    MLOG("[Listen] step10 InitListen returned %d", listenOk);
+    MLOG("[Listen] N InitListen returned %d", (int)listenOk);
 
     if (!listenOk) {
-        MLOG("[Listen] InitListen failed");
+        MLOG("[Listen] FAIL: InitListen returned false");
         return false;
     }
 
