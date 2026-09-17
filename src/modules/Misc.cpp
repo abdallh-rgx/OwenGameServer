@@ -183,11 +183,11 @@ bool Misc::Listen() {
         return false;
     }
 
-    using CreateND_t = void* (*)(void*, void*, FName*);
+    using CreateND_t = void* (*)(void*, void*, FName);
     CreateND_t createND = (CreateND_t)(Sarah::ImageBase + Off::CreateNetDriver);
     MLOG("[Listen] J CreateNetDriver fn=%p", (void*)createND);
 
-    void* netDriver = createND(engine, worldCtx, &driverName);
+    void* netDriver = createND(engine, worldCtx, driverName);
     MLOG("[Listen] K netDriver=%p", netDriver);
 
     if (!netDriver) {
