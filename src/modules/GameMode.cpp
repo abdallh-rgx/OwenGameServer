@@ -331,7 +331,7 @@ void GameMode::HandleStartingNewPlayer(UObject* context, Params::AGameModeBase_H
     Member.MemberUniqueId = playerState->UniqueId;
 
     gameState->GameMemberInfoArray.Members.Add(Member);
-    gameState->GameMemberInfoArray.MarkItemDirty(Member);
+    Utils::MarkItemDirty(gameState->GameMemberInfoArray, Member);
 
     StartingCount++;
 
