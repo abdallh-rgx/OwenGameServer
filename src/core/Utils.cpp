@@ -2,7 +2,6 @@
 #include "Utils.hpp"
 #include "UObject.hpp"
 #include "FName.hpp"
-#include "NameIndices.h"
 #include "SDK/Engine_classes.hpp"
 
 #include <cstdlib>
@@ -120,21 +119,25 @@ inline std::wstring UTF16ToW(const char16_t* s, size_t len) {
 FName MakeFName(const wchar_t* name) {
     if (!name || !name[0]) return FName{};
 
-    static std::mutex cacheMtx;
+    static std::mutex mtx;
     static std::map<std::wstring, int32_t> cache;
 
     std::wstring wname(name);
 
     {
-        std::lock_guard<std::mutex> lock(cacheMtx);
+        std::lock_guard<std::mutex> lock(mtx);
         auto it = cache.find(wname);
         if (it != cache.end()) return FName(it->second);
     }
 
-    int32_t idx = FNameIndices::LookupW(name);
+    FString fs = Utils::ToFString(wname);
+
+    FName result = UKismetStringLibrary::Conv_StringToName(fs);
+
+    int32_t idx = result.ComparisonIndex;
 
     if (idx > 0) {
-        std::lock_guard<std::mutex> lock(cacheMtx);
+        std::lock_guard<std::mutex> lock(mtx);
         cache[wname] = idx;
     }
 
