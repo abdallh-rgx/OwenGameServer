@@ -130,7 +130,20 @@ FName MakeFName(const wchar_t* name) {
         if (it != cache.end()) return FName(it->second);
     }
 
-    FString fs = Utils::ToFString(wname);
+    std::u16string u16;
+    for (wchar_t wc : wname) {
+        uint32_t cp = (uint32_t)wc;
+        if (cp <= 0xFFFF) {
+            u16.push_back((char16_t)cp);
+        } else {
+            cp -= 0x10000;
+            u16.push_back((char16_t)(0xD800 + (cp >> 10)));
+            u16.push_back((char16_t)(0xDC00 + (cp & 0x3FF)));
+        }
+    }
+    u16.push_back(u'\0');
+
+    FString fs(reinterpret_cast<const uint8*>(u16.data()));
 
     FName result = UKismetStringLibrary::Conv_StringToName(fs);
 
