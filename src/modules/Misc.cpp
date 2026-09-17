@@ -7,6 +7,34 @@
 #include "FName.hpp"
 
 #include <cstdlib>
+#include <cstdarg>
+
+static FILE* g_miscLog = nullptr;
+
+static void MLOG(const char* fmt, ...) {
+    char buf[2048];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+
+    __android_log_print(ANDROID_LOG_INFO, "OwenGameServer", "%s", buf);
+
+    if (!g_miscLog) {
+        const char* paths[] = {
+            "/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+            "/sdcard/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+        };
+        for (auto p : paths) {
+            g_miscLog = fopen(p, "a");
+            if (g_miscLog) break;
+        }
+    }
+    if (g_miscLog) {
+        fprintf(g_miscLog, "%s\n", buf);
+        fflush(g_miscLog);
+    }
+}
 
 namespace {
     struct FStringLocal {
@@ -44,11 +72,11 @@ void Misc::TickFlush(void* driver, float dt) {
 
         if (!hasAClientConnected && numConnections > 0 && clientConnections != nullptr) {
             hasAClientConnected = true;
-            LOGI("[TickFlush] First client connected");
+            MLOG("[TickFlush] First client connected");
         }
 
         if (hasAClientConnected && numConnections == 0) {
-            LOGW("[TickFlush] All clients disconnected, staying alive (Listen mode)");
+            MLOG("[TickFlush] All clients disconnected, staying alive (Listen mode)");
         }
     }
 
@@ -108,63 +136,67 @@ bool Misc::StartAircraftPhase(AFortGameModeAthena* gameMode, char a2) {
 }
 
 bool Misc::Listen() {
-    LOGI("[Listen] === Starting Listen (Client+Server mode) ===");
+    MLOG("[Listen] === Starting Listen (Client+Server mode) ===");
 
     UWorld* world = UWorld::GetWorld();
     UEngine* engine = UEngine::GetEngine();
 
-    LOGI("[Listen] engine=%p world=%p", engine, world);
+    MLOG("[Listen] engine=%p world=%p", engine, world);
 
     if (!engine || !world) {
-        LOGE("[Listen] engine or world is null");
+        MLOG("[Listen] engine or world is null");
         return false;
     }
+
+    MLOG("[Listen] step1 OK");
 
     if (!world->PersistentLevel) {
-        LOGE("[Listen] PersistentLevel is null");
+        MLOG("[Listen] PersistentLevel is null");
         return false;
     }
 
-    LOGI("[Listen] PersistentLevel=%p", world->PersistentLevel);
+    MLOG("[Listen] step2 PersistentLevel=%p", world->PersistentLevel);
 
     using GetWorldCtx_t = void* (*)(void*, void*);
     GetWorldCtx_t getWorldCtx = (GetWorldCtx_t)(Sarah::ImageBase + Off::GetWorldContext);
     if (!getWorldCtx) {
-        LOGE("[Listen] GetWorldContext is null");
+        MLOG("[Listen] GetWorldContext is null");
         return false;
     }
+
+    MLOG("[Listen] step3 calling GetWorldContext...");
 
     void* worldCtx = getWorldCtx(engine, world);
     if (!worldCtx) {
-        LOGE("[Listen] worldCtx is null");
+        MLOG("[Listen] worldCtx is null");
         return false;
     }
 
-    LOGI("[Listen] worldCtx = %p", worldCtx);
+    MLOG("[Listen] step4 worldCtx = %p", worldCtx);
 
     FName driverName = MakeFName(L"GameNetDriver");
-    LOGI("[Listen] FName(GameNetDriver) index = %d", driverName.ComparisonIndex);
+    MLOG("[Listen] step5 FName(GameNetDriver) index = %d", driverName.ComparisonIndex);
 
     if (driverName.ComparisonIndex == 0) {
-        LOGE("[Listen] FName 'GameNetDriver' not found");
+        MLOG("[Listen] FName 'GameNetDriver' not found");
         return false;
     }
 
     using CreateND_t = void* (*)(void*, void*, FName*);
     CreateND_t createND = (CreateND_t)(Sarah::ImageBase + Off::CreateNetDriver);
     if (!createND) {
-        LOGE("[Listen] CreateNetDriver is null");
+        MLOG("[Listen] CreateNetDriver is null");
         return false;
     }
 
-    LOGI("[Listen] Calling CreateNetDriver...");
+    MLOG("[Listen] step6 calling CreateNetDriver...");
     void* netDriver = createND(engine, worldCtx, &driverName);
     if (!netDriver) {
-        LOGE("[Listen] CreateNetDriver failed");
+        MLOG("[Listen] CreateNetDriver failed");
         return false;
     }
 
-    LOGI("[Listen] NetDriver created = %p", netDriver);
+    MLOG("[Listen] step7 NetDriver created = %p", netDriver);
 
     *(FName*)((uint8_t*)netDriver + 0x190) = driverName;
     *(void**)((uint8_t*)netDriver + 0x140) = world;
@@ -173,7 +205,7 @@ bool Misc::Listen() {
         collection.NetDriver = (UNetDriver*)netDriver;
     }
 
-    LOGI("[Listen] Setting URL...");
+    MLOG("[Listen] step8 setting URL...");
     FURLLocal url = {};
     url.Port = g_Port;
     url.Valid = 1;
@@ -181,22 +213,24 @@ bool Misc::Listen() {
     using InitListen_t = bool (*)(void*, void*, FURLLocal*, bool, FStringLocal*);
     InitListen_t initListen = (InitListen_t)(Sarah::ImageBase + Off::InitListen);
     if (!initListen) {
-        LOGE("[Listen] InitListen is null");
+        MLOG("[Listen] InitListen is null");
         return false;
     }
 
-    LOGI("[Listen] Calling InitListen on port %d...", g_Port);
+    MLOG("[Listen] step9 calling InitListen on port %d...", g_Port);
 
     bool listenOk = initListen(netDriver, world, &url, false, nullptr);
 
+    MLOG("[Listen] step10 InitListen returned %d", listenOk);
+
     if (!listenOk) {
-        LOGE("[Listen] InitListen returned false");
+        MLOG("[Listen] InitListen failed");
         return false;
     }
 
     world->NetDriver = (UNetDriver*)netDriver;
 
-    LOGI("[Listen] === Server listening on port %d ===", g_Port);
+    MLOG("[Listen] === Server listening on port %d ===", g_Port);
     return true;
 }
 
