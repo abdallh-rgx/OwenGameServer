@@ -47,6 +47,74 @@ void* EngineRealloc(void* ptr, int64_t newLen, uint32_t alignment) {
     return (void*)addr;
 }
 
+namespace Enc {
+
+inline std::wstring UTF8ToW(const char* s, size_t len) {
+    std::wstring out;
+    out.reserve(len);
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = (unsigned char)s[i];
+        uint32_t cp = 0;
+        int extra = 0;
+        if (c < 0x80) { cp = c; extra = 0; }
+        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; extra = 1; }
+        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; extra = 2; }
+        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; extra = 3; }
+        else { i++; continue; }
+        i++;
+        for (int j = 0; j < extra && i < len; j++, i++)
+            cp = (cp << 6) | ((unsigned char)s[i] & 0x3F);
+        out.push_back((wchar_t)cp);
+    }
+    return out;
+}
+
+inline std::string WToUTF8(const std::wstring& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (wchar_t wc : s) {
+        uint32_t cp = (uint32_t)wc;
+        if (cp < 0x80) {
+            out.push_back((char)cp);
+        } else if (cp < 0x800) {
+            out.push_back((char)(0xC0 | (cp >> 6)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        } else if (cp < 0x10000) {
+            out.push_back((char)(0xE0 | (cp >> 12)));
+            out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        } else {
+            out.push_back((char)(0xF0 | (cp >> 18)));
+            out.push_back((char)(0x80 | ((cp >> 12) & 0x3F)));
+            out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            out.push_back((char)(0x80 | (cp & 0x3F)));
+        }
+    }
+    return out;
+}
+
+inline std::wstring UTF16ToW(const char16_t* s, size_t len) {
+    std::wstring out;
+    out.reserve(len);
+    for (size_t i = 0; i < len; i++) {
+        char16_t c = s[i];
+        if (c >= 0xD800 && c <= 0xDBFF && i + 1 < len) {
+            char16_t c2 = s[i + 1];
+            if (c2 >= 0xDC00 && c2 <= 0xDFFF) {
+                uint32_t cp = 0x10000u + (((uint32_t)(c - 0xD800) << 10) | (uint32_t)(c2 - 0xDC00));
+                out.push_back((wchar_t)cp);
+                i++;
+                continue;
+            }
+        }
+        out.push_back((wchar_t)c);
+    }
+    return out;
+}
+
+} // namespace Enc
+
 namespace NameRaw {
 
 constexpr int32     kBlocksBit   = 0x10;
@@ -58,8 +126,12 @@ constexpr uint16_t  kWideMask    = 0x1;
 constexpr int32     kMaxNameLen  = 255;
 constexpr uintptr_t kBlocksOff   = 0x40;
 
+inline uintptr_t GetPool() {
+    return (uintptr_t)(Sarah::ImageBase + (uintptr_t)Off::GNames);
+}
+
 inline uintptr_t GetBlocksBase() {
-    return *(uintptr_t*)(Sarah::GNames + kBlocksOff);
+    return *(uintptr_t*)(GetPool() + kBlocksOff);
 }
 
 inline uintptr_t GetBlock(int32 blockIdx) {
@@ -69,7 +141,7 @@ inline uintptr_t GetBlock(int32 blockIdx) {
 }
 
 inline std::string ReadByIndex(int32 index) {
-    if (index < 0 || !Sarah::GNames) return "";
+    if (index < 0) return "";
 
     const int32 blockIdx = index >> kBlocksBit;
     const int32 inBlock  = (index & ((1 << kBlocksBit) - 1)) * kStride;
@@ -90,9 +162,8 @@ inline std::string ReadByIndex(int32 index) {
     const void* src = (void*)(entry + kStringOff);
 
     if (wide) {
-        std::u16string u16((size_t)len, u'\0');
-        std::memcpy(u16.data(), src, (size_t)len * sizeof(char16_t));
-        return WToU8(U16ToW(u16.c_str(), u16.size()));
+        std::wstring w = Enc::UTF16ToW((const char16_t*)src, (size_t)len);
+        return Enc::WToUTF8(w);
     }
 
     return std::string((const char*)src, (size_t)len);
@@ -119,7 +190,7 @@ void BuildOnce() {
         std::string s = NameRaw::ReadByIndex(i);
         if (s.empty()) continue;
 
-        std::wstring ws = U8ToW(s.c_str(), s.size());
+        std::wstring ws = Enc::UTF8ToW(s.c_str(), s.size());
         if (ws.empty()) continue;
 
         g_map.try_emplace(std::move(ws), i);
@@ -271,8 +342,19 @@ void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj) {
 }
 
 FString Utils::ToFString(const std::wstring& s) {
-    std::u16string u16 = WToU16(s);
+    std::u16string u16;
+    for (wchar_t wc : s) {
+        uint32_t cp = (uint32_t)wc;
+        if (cp <= 0xFFFF) {
+            u16.push_back((char16_t)cp);
+        } else {
+            cp -= 0x10000;
+            u16.push_back((char16_t)(0xD800 + (cp >> 10)));
+            u16.push_back((char16_t)(0xDC00 + (cp & 0x3FF)));
+        }
+    }
     u16.push_back(u'\0');
+
     FString result;
     for (char16_t c : u16) result.Add(c);
     return result;
@@ -280,15 +362,15 @@ FString Utils::ToFString(const std::wstring& s) {
 
 std::wstring Utils::FromFString(const FString& s) {
     if (!s) return L"";
-    std::u16string u16;
     int32 n = s.Num();
     const char16_t* data = (const char16_t*)s.GetData();
     if (!data) return L"";
+    std::u16string u16;
     for (int32 i = 0; i < n; i++) {
         if (data[i] == 0) break;
         u16.push_back(data[i]);
     }
-    return U16ToW(u16.c_str(), u16.size());
+    return Sarah::Enc::UTF16ToW(u16.c_str(), u16.size());
 }
 
 bool Utils::TagContainerHasTag(const FGameplayTagContainer& container, const wchar_t* tagName) {
