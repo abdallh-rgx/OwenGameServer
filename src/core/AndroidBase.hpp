@@ -56,7 +56,7 @@ inline void SetDedicatedServerMode() {
     uintptr_t page = (Sarah::ImageBase + Off::GIsEditor) & ~0xFFF;
     mprotect((void*)page, 0x2000, PROT_READ | PROT_WRITE | PROT_EXEC);
     *(volatile uint8_t*)(Sarah::ImageBase + Off::GIsEditor) = 0;
-    *(volatile uint8_t*)(Sarah::ImageBase + Off::GIsClient) = 0;
+    *(volatile uint8_t*)(Sarah::ImageBase + Off::GIsClient) = 1;
     *(volatile uint8_t*)(Sarah::ImageBase + Off::GIsServer) = 1;
 }
 
