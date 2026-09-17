@@ -16,7 +16,7 @@ void AC::CheckUser(AFortPlayerControllerAthena* controller) {
     std::thread([controller, name]() {
         auto response = API::GetResponse(BackendUrl + "/api/v1/checkUser/" + name);
         if (response != "Valid") {
-            if (controller) {
+            if (controller && controller->NetConnection) {
                 controller->ClientReturnToMainMenu(Utils::ToFString(L""));
             }
         }
