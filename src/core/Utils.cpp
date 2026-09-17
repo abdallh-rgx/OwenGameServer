@@ -186,21 +186,17 @@ void BuildOnce() {
     if (g_built.load(std::memory_order_relaxed)) return;
 
     uintptr_t pool = Sarah::ImageBase + (uintptr_t)Off::GNames;
-    LOGI("[ND] pool=0x%llx", (unsigned long long)pool);
+    LOGI("[ND] Building name index from pool 0x%llx", (unsigned long long)pool);
 
     uintptr_t blocksPtr = 0;
     std::memcpy(&blocksPtr, (void*)(pool + 0x40), sizeof(blocksPtr));
-    LOGI("[ND] blocksPtr=0x%llx", (unsigned long long)blocksPtr);
-
     if (!blocksPtr) {
-        LOGE("[ND] blocksPtr NULL - FName pool not ready or GNames offset wrong");
+        LOGE("[ND] blocksPtr NULL - FName pool not ready");
         return;
     }
 
     uintptr_t block0 = 0;
     std::memcpy(&block0, (void*)blocksPtr, sizeof(block0));
-    LOGI("[ND] block0=0x%llx", (unsigned long long)block0);
-
     if (!block0) {
         LOGE("[ND] block0 NULL");
         return;
@@ -249,46 +245,46 @@ int32 Lookup(const std::wstring& target) {
 } // namespace NameIndex
 
 bool WaitForNamePoolReady(int timeoutMs) {
-    LOGI("[ND] Waiting for FName pool to become ready...");
+    LOGI("[ND] WaitForNamePoolReady: ImageBase=0x%llx",
+         (unsigned long long)Sarah::ImageBase);
 
-    const int stepMs = 500;
+    const int stepMs   = 500;
     const int maxTries = timeoutMs / stepMs;
 
     for (int i = 0; i < maxTries; i++) {
         uintptr_t pool = Sarah::ImageBase + (uintptr_t)Off::GNames;
-        if (!pool) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
-            continue;
-        }
 
         uintptr_t blocksPtr = 0;
         std::memcpy(&blocksPtr, (void*)(pool + 0x40), sizeof(blocksPtr));
-        if (!blocksPtr) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
-            continue;
-        }
 
         uintptr_t block0 = 0;
-        std::memcpy(&block0, (void*)blocksPtr, sizeof(block0));
-        if (!block0) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
-            continue;
+        uint16_t  hdr    = 0;
+
+        if (blocksPtr) {
+            std::memcpy(&block0, (void*)blocksPtr, sizeof(block0));
+            if (block0) {
+                std::memcpy(&hdr, (void*)block0, sizeof(hdr));
+            }
         }
 
-        uint16_t hdr = 0;
-        std::memcpy(&hdr, (void*)block0, sizeof(hdr));
+        if (i == 0 || i == 5 || i == 20 || i == 60) {
+            LOGI("[ND] iter=%d pool=0x%llx blocks=0x%llx block0=0x%llx hdr=0x%04X",
+                 i,
+                 (unsigned long long)pool,
+                 (unsigned long long)blocksPtr,
+                 (unsigned long long)block0,
+                 (unsigned)hdr);
+        }
 
-        const int len = (int32)(hdr >> 6);
-        if (len >= 3 && len <= 20) {
-            LOGI("[ND] FName pool ready after %d ms (hdr=0x%04X len=%d)",
-                 (i + 1) * stepMs, (unsigned)hdr, len);
+        if (blocksPtr && block0) {
+            LOGI("[ND] FName pool ready at iter=%d", i);
             return true;
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
     }
 
-    LOGE("[ND] FName pool never became ready after %d ms", timeoutMs);
+    LOGE("[ND] FName pool NOT ready after %d ms", timeoutMs);
     return false;
 }
 
