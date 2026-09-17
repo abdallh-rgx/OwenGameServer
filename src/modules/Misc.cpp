@@ -101,8 +101,10 @@ bool Misc::Listen() {
     UWorld* world = UWorld::GetWorld();
     UEngine* engine = UEngine::GetEngine();
 
+    LOGI("[Listen] engine=%p world=%p", engine, world);
+
     if (!engine || !world) {
-        LOGE("[Listen] engine=%p world=%p", engine, world);
+        LOGE("[Listen] engine or world is null");
         return false;
     }
 
@@ -110,11 +112,15 @@ bool Misc::Listen() {
     GetWorldCtx_t getWorldCtx = (GetWorldCtx_t)(Sarah::ImageBase + Off::GetWorldContext);
     void* worldCtx = getWorldCtx(engine, world);
     if (!worldCtx) {
-        LOGE("[Listen] worldCtx null");
+        LOGE("[Listen] worldCtx is null");
         return false;
     }
 
+    LOGI("[Listen] worldCtx OK = %p", worldCtx);
+
     FName driverName = MakeFName(L"GameNetDriver");
+    LOGI("[Listen] MakeFName(GameNetDriver) = %d", driverName.ComparisonIndex);
+
     if (driverName.ComparisonIndex == 0) {
         LOGE("[Listen] FName 'GameNetDriver' not found");
         return false;
@@ -127,6 +133,8 @@ bool Misc::Listen() {
         LOGE("[Listen] CreateNetDriver failed");
         return false;
     }
+
+    LOGI("[Listen] NetDriver created = %p", netDriver);
 
     *(FName*)((uint8_t*)netDriver + 0x190) = driverName;
     *(void**)((uint8_t*)netDriver + 0x140) = world;
@@ -141,6 +149,8 @@ bool Misc::Listen() {
 
     using InitListen_t = bool (*)(void*, void*, FURLLocal*, bool, FStringLocal*);
     InitListen_t initListen = (InitListen_t)(Sarah::ImageBase + Off::InitListen);
+
+    LOGI("[Listen] calling InitListen...");
 
     if (!initListen(netDriver, world, &url, false, nullptr)) {
         LOGE("[Listen] InitListen failed");
