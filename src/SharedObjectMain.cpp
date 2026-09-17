@@ -473,14 +473,22 @@ static void MainThread() {
         LOGF("[CORE] GObjects Num = %d", Sarah::UObjectManager::Num());
     }
 
-LOGF("[CORE] Initializing FName via engine");
+LOGF("[CORE] Waiting for FName pool to be ready");
+if (!Sarah::WaitForNamePoolReady(120000)) {
+    LOGF("[CORE] FName pool never became ready - aborting");
+    return;
+}
 
+LOGF("[CORE] Building FName index");
 {
     FName testName = MakeFName(L"PlayerController");
     LOGF("[CORE] FName PlayerController index=%d", testName.ComparisonIndex);
 
     FName testName2 = MakeFName(L"GameNetDriver");
     LOGF("[CORE] FName GameNetDriver index=%d", testName2.ComparisonIndex);
+
+    FName testName3 = MakeFName(L"None");
+    LOGF("[CORE] FName None index=%d", testName3.ComparisonIndex);
 }
 
     LOGF("[CORE] Before SetDedicatedServerMode");
