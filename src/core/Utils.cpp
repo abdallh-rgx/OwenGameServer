@@ -1,357 +1,60 @@
-#include "pch.h"
-#include "Utils.hpp"
-#include "UObject.hpp"
-#include "FName.hpp"
+To find and call UKismetStringLibrary::Conv_StringToName using a string reference within your existing C++ SDK, you can utilize the Unreal Engine reflection system. This allows you to resolve the function at runtime even if you do not have the library headers linked or if you are working in an environment where symbols are not exported.
+In your specific Sarah namespace context, you can implement this by resolving the UClass and the UFunction via their internal string paths.
+1. Identify the Reflection Paths
+To find these objects by string, use the following internal paths:
 
-#include <cstdlib>
-#include <cstring>
-#include <map>
-#include <mutex>
-#include <atomic>
-#include <string>
+Class Path: /Script/Engine.KismetStringLibrary
+Function Name: Conv_StringToName
 
-namespace Sarah {
-
-std::atomic<uint32_t> GFastArrayIDCounter{1};
-
-void* EngineRealloc(void* ptr, int64_t newLen, uint32_t alignment) {
-    if (newLen == 0) {
-        if (ptr) {
-            if (alignment > 16) {
-                void* original = *((void**)ptr - 1);
-                free(original);
-            } else {
-                free(ptr);
-            }
-        }
-        return nullptr;
-    }
-
-    if (alignment <= 16) {
-        return realloc(ptr, (size_t)newLen);
-    }
-
-    void* original = ptr ? *((void**)ptr - 1) : nullptr;
-
-    const size_t totalSize = (size_t)newLen + (size_t)alignment - 1 + sizeof(void*);
-    void* raw = realloc(original, totalSize);
-    if (!raw) return nullptr;
-
-    uintptr_t addr = ((uintptr_t)raw + sizeof(void*) + (uintptr_t)alignment - 1)
-                   & ~((uintptr_t)alignment - 1);
-
-    *((void**)addr - 1) = raw;
-    return (void*)addr;
-}
-
-}
-
-UObject* Utils::FindObject(const wchar_t* path, UClass* cls) {
-    return Sarah::UObjectManager::Find(path, cls);
-}
-
-UObject* Utils::LoadObject(const wchar_t* path, UClass* cls) {
-    return Sarah::UObjectManager::Load(path, cls);
-}
-
-UObject* Utils::FindOrLoad(const wchar_t* path, UClass* cls) {
-    return Sarah::UObjectManager::FindOrLoad(path, cls);
-}
-
-AActor* Utils::SpawnActor(UClass* cls, const FVector& loc, const FRotator& rot, AActor* owner) {
-    if (!cls) return nullptr;
-
-    struct FSpawnParams {
-        FName                    Name;
-        uint32_t                 _pad0;
-        AActor*                  Template;
-        AActor*                  Owner;
-        SDK::APawn*              Instigator;
-        void*                    OverrideLevel;
-        SDK::UActorComponent*    OverrideParentComponent;
-        uint8_t                  SpawnCollisionHandlingOverride;
-        uint8_t                  BitFlags;
-        uint8_t                  NameMode;
-        uint8_t                  _pad1;
-        uint32_t                 ObjectFlags;
-    };
-
-    FSpawnParams params = {};
-    params.Owner = owner;
-    params.SpawnCollisionHandlingOverride = 1;
-    params.NameMode = 3;
-
-    CoreUObject::FTransform transform = MakeTransform(loc, rot);
-
-    using SpawnFn = AActor* (*)(UWorld*, UClass*, CoreUObject::FTransform*, FSpawnParams*);
-    static SpawnFn fn = nullptr;
-    if (!fn) fn = (SpawnFn)(Sarah::ImageBase + Off::UWorld_SpawnActor);
-
-    UWorld* world = UWorld::GetWorld();
-    if (!world) return nullptr;
-
-    return fn(world, cls, &transform, &params);
-}
-
-std::vector<AActor*> Utils::GetAllActors(UClass* cls) {
-    std::vector<AActor*> out;
-    if (!cls) return out;
-
-    UWorld* world = UWorld::GetWorld();
-    if (!world) return out;
-
-    TArray<AActor*> actors;
-    UGameplayStatics::GetAllActorsOfClass(world, cls, &actors);
-    for (int i = 0; i < actors.Num(); i++) out.push_back(actors[i]);
-    actors.Free();
-    return out;
-}
-
-float Utils::EvaluateScalableFloat(FScalableFloat& value) {
-    if (!value.Curve.CurveTable)
-        return value.Value;
-
-    float out = 0.f;
-    FString ctx;
-    UDataTableFunctionLibrary::EvaluateCurveTableRow(
-        value.Curve.CurveTable, value.Curve.RowName, 0.f, nullptr, &out, ctx);
-    return out;
-}
-
-float Utils::EvaluateCurve(FCurveTableRowHandle& handle, float inTime) {
-    if (!handle.CurveTable)
-        return 0.f;
-
-    float out = 0.f;
-    FString ctx;
-    UDataTableFunctionLibrary::EvaluateCurveTableRow(
-        handle.CurveTable, handle.RowName, inTime, nullptr, &out, ctx);
-    return out;
-}
-
-void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj) {
-    out.ObjectIndex = 0;
-    out.ObjectSerialNumber = 0;
-
-    if (!obj || !Sarah::GObjectsLayout.Initialized) return;
-
-    int32_t index = *(int32_t*)((uint8_t*)obj + 0xC);
-    if (index < 0) return;
-
-    uint8_t* item = Sarah::GetItemByIndex(index);
-    if (!item) return;
-
-    if (*(void**)item != obj) return;
-
-    out.ObjectIndex = index;
-    out.ObjectSerialNumber = *(int32_t*)(item + 0x10) * 2;
-}
-
-FString Utils::ToFString(const std::wstring& s) {
-    std::u16string u16 = WToU16(s);
-    u16.push_back(u'\0');
-    FString result;
-    for (char16_t c : u16) result.Add(c);
-    return result;
-}
-
-std::wstring Utils::FromFString(const FString& s) {
-    if (!s) return L"";
-    std::u16string u16;
-    int32 n = s.Num();
-    const char16_t* data = (const char16_t*)s.GetData();
-    if (!data) return L"";
-    for (int32 i = 0; i < n; i++) {
-        if (data[i] == 0) break;
-        u16.push_back(data[i]);
-    }
-    return U16ToW(u16.c_str(), u16.size());
-}
-
-bool Utils::TagContainerHasTag(const FGameplayTagContainer& container, const wchar_t* tagName) {
-    if (container.GameplayTags.Num() == 0) return false;
-    FName tag = MakeFName(tagName);
-    if (tag.ComparisonIndex == 0) return false;
-    for (int i = 0; i < container.GameplayTags.Num(); i++) {
-        if (container.GameplayTags[i].TagName == tag)
-            return true;
-    }
-    return false;
-}
-
-bool Utils::TagContainerHasAll(const FGameplayTagContainer& container, const FGameplayTagContainer& required) {
-    if (required.GameplayTags.Num() == 0) return true;
-    for (int i = 0; i < required.GameplayTags.Num(); i++) {
-        bool found = false;
-        for (int j = 0; j < container.GameplayTags.Num(); j++) {
-            if (container.GameplayTags[j].TagName == required.GameplayTags[i].TagName) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) return false;
-    }
-    return true;
-}
-
-void Utils::MarkItemDirty(FFastArraySerializer& serializer, FFastArraySerializerItem& item) {
-    int32_t& arrayKey = *(int32_t*)((uint8_t*)&serializer + 0x54);
-    arrayKey++;
-    if (item.ReplicationID == -1) {
-        item.ReplicationID = Sarah::GFastArrayIDCounter.fetch_add(1);
-    }
-    item.ReplicationKey = Sarah::GFastArrayIDCounter.fetch_add(1);
-    item.MostRecentArrayReplicationKey = arrayKey;
-}
-
-void Utils::MarkArrayDirty(FFastArraySerializer& serializer) {
-    int32_t& arrayKey = *(int32_t*)((uint8_t*)&serializer + 0x54);
-    arrayKey++;
-}
-
+2. Implement Dynamic Function Lookup
+You can update your MakeFName function to resolve the function reference dynamically. It is best practice to cache the UFunction* pointer to avoid the performance cost of string lookups on every call.
+// Within your MakeFName implementation
 FName MakeFName(const wchar_t* name) {
     if (!name || !name[0]) return FName{};
 
-    static std::mutex mtx;
-    static std::map<std::wstring, int32_t> cache;
+    // ... (Your existing cache/mutex logic) ...
 
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        auto it = cache.find(name);
-        if (it != cache.end()) return FName(it->second);
-    }
-
-    std::u16string u16 = WToU16(name);
-    if (u16.empty()) return FName{};
-
-    int32_t found = 0;
-
-    if (Sarah::ImageBase && Off::GNames) {
-        uintptr_t pool = Sarah::ImageBase + Off::GNames;
-
-        constexpr uint32_t Stride = 4;
-        constexpr uint32_t BlockSizeBytes = Stride * (1u << 16);
-        constexpr uint32_t MaxBlocks = 256;
-        uint32_t emptyBlocks = 0;
-
-        for (uint32_t blockIdx = 0; blockIdx < MaxBlocks; blockIdx++) {
-            uintptr_t block = *(uintptr_t*)(pool + 0x40 + (uint64_t)blockIdx * 8);
-            if (!block) {
-                if (++emptyBlocks >= 6) break;
-                continue;
-            }
-            emptyBlocks = 0;
-
-            uint32_t byteOffset = 0;
-            while (byteOffset < BlockSizeBytes) {
-                uintptr_t entry = block + byteOffset;
-                uint16_t header = *(uint16_t*)entry;
-                int len = header >> 6;
-
-                if (len == 0) {
-                    byteOffset += 12;
-                    continue;
-                }
-                if (len > 1023) {
-                    byteOffset += Stride;
-                    continue;
-                }
-
-                bool wide = (header & 1) != 0;
-                uint32_t dataBytes = wide ? (uint32_t)(len + 1) * 2 : (uint32_t)(len + 1);
-                uint32_t entrySize = 4 + dataBytes;
-                uint32_t nextOffset = (entrySize + (Stride - 1)) & ~(Stride - 1);
-
-                if ((size_t)len == u16.size()) {
-                    bool match = false;
-                    if (wide) {
-                        const char16_t* str = (const char16_t*)(entry + 4);
-                        match = (memcmp(str, u16.data(), u16.size() * sizeof(char16_t)) == 0);
-                    } else {
-                        const char* str = (const char*)(entry + 4);
-                        match = true;
-                        for (int j = 0; j < len; j++) {
-                            if ((unsigned char)str[j] != (unsigned char)u16[j]) {
-                                match = false;
-                                break;
-                            }
-                        }
-                    }
-                    if (match) {
-                        found = (int32_t)((blockIdx << 16) | (byteOffset / Stride));
-                        break;
-                    }
-                }
-
-                byteOffset += nextOffset;
-            }
-            if (found) break;
+    // 1. Resolve the Function Reference once
+    static UFunction* ConvFunc = nullptr;
+    if (!ConvFunc) {
+        // Use your existing FindObject utility to find the class
+        UClass* StringLibClass = (UClass*)Utils::FindObject(L"/Script/Engine.KismetStringLibrary", nullptr);
+        if (StringLibClass) {
+            // Find the function by its string name
+            ConvFunc = StringLibClass->FindFunctionByName(FName(TEXT("Conv_StringToName")));
         }
     }
 
-    if (found != 0) {
-        std::lock_guard<std::mutex> lock(mtx);
-        cache[name] = found;
+    // 2. Prepare the parameters for ProcessEvent
+    // The struct must match the memory layout of the UFunction's stack
+    struct FConv_StringToName_Params {
+        FString InString;  // Input
+        FName ReturnValue; // Output (Return value)
+    };
+
+    FConv_StringToName_Params Params;
+    Params.InString = fs; // 'fs' is the FString you constructed in your snippet
+
+    if (ConvFunc) {
+        // Static functions are called on the Class Default Object (CDO)
+        UObject* CDO = ConvFunc->GetOuterUClass()->GetDefaultObject();
+        CDO->ProcessEvent(ConvFunc, &Params);
     }
 
-    return FName(found);
+    FName result = Params.ReturnValue;
+
+    // ... (Your existing cache storage logic) ...
+
+    return result;
 }
+3. Key Technical Requirements
 
-uint32_t MakeFNameIndex(const wchar_t* name) {
-    FName n = MakeFName(name);
-    return (uint32_t)n.ComparisonIndex;
-}
+The CDO Context: Since Conv_StringToName is a static function in Blueprints, you must call ProcessEvent using the library's Class Default Object as the context.
+Memory Layout: The Params struct must exactly match the function signature. In this case, it is an FString followed by an FName.
+Elimination of Hard Dependencies: By using FindFunctionByName, you eliminate the need to link against Engine.lib for this specific conversion, which is useful if your SDK is injected into a running process.
 
-namespace SDK {
+Testing and Verification
 
-UObject* FWeakObjectPtr::Get() const {
-    if (ObjectSerialNumber == 0 || ObjectIndex < 0)
-        return nullptr;
-
-    uint8_t* item = Sarah::GetItemByIndex(ObjectIndex);
-    if (!item) return nullptr;
-
-    UObject* obj = *(UObject**)item;
-    if (!obj) return nullptr;
-
-    int32_t serial = *(int32_t*)(item + 0x10) * 2;
-    if (serial != ObjectSerialNumber) return nullptr;
-
-    return obj;
-}
-
-bool FWeakObjectPtr::IsValid() const {
-    return Get() != nullptr;
-}
-
-bool FWeakObjectPtr::operator==(const FWeakObjectPtr& Other) const {
-    return ObjectIndex == Other.ObjectIndex
-        && ObjectSerialNumber == Other.ObjectSerialNumber;
-}
-
-bool FWeakObjectPtr::operator!=(const FWeakObjectPtr& Other) const {
-    return !(*this == Other);
-}
-
-bool FWeakObjectPtr::operator==(const class UObject* Other) const {
-    return Get() == Other;
-}
-
-bool FWeakObjectPtr::operator!=(const class UObject* Other) const {
-    return Get() != Other;
-}
-
-}
-
-namespace UC {
-
-void* ContainerRealloc(void* ptr, int64 newLen, uint32 alignment) {
-    (void)alignment;
-    return std::realloc(ptr, (size_t)newLen);
-}
-
-void ContainerFree(void* ptr) {
-    (void)ptr;
-}
-
-}
+PIE/Runtime: Ensure the UClass is loaded. If FindObject returns null, you may need to use your LoadObject utility first to ensure the Engine package is in memory.
+Validation: Use UE_LOG or a debugger to ensure ConvFunc is not null after the first call.
+Naming: Remember that FName comparisons and FindFunctionByName are case-insensitive. If your logic relies on specific elimination tracking or tag-based names, verify the resulting ComparisonIndex matches your expectations.
