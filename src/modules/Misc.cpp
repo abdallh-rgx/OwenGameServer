@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "Misc.hpp"
+#include "API.hpp"
 #include "options.h"
 #include "Utils.hpp"
 #include "UObject.hpp"
@@ -40,16 +41,16 @@ void Misc::TickFlush(void* driver, float dt) {
         static bool hasAClientConnected = false;
         void** clientConnections = *(void***)((uint8_t*)driver + 0x90);
         int32_t numConnections = *(int32_t*)((uint8_t*)driver + 0x98);
-        if (!hasAClientConnected && numConnections > 0) hasAClientConnected = true;
-        else if (hasAClientConnected && numConnections == 0) {
-            _exit(0);
+        if (!hasAClientConnected && numConnections > 0 && clientConnections != nullptr) {
+            hasAClientConnected = true;
+            LOGI("[TickFlush] client connected");
         }
     }
 
     if (!PlayersToDestroyLocked && PlayersToDestroy.size() > 0) {
-        for (size_t i = 0; i < PlayersToDestroy.size(); i++)
-            PlayersToDestroy[i]->K2_DestroyActor();
-
+        for (size_t i = 0; i < PlayersToDestroy.size(); i++) {
+            if (PlayersToDestroy[i]) PlayersToDestroy[i]->K2_DestroyActor();
+        }
         PlayersToDestroy.clear();
     }
 
@@ -60,6 +61,8 @@ bool Misc::StartAircraftPhase(AFortGameModeAthena* gameMode, char a2) {
     bool ret = false;
     if (StartAircraftPhaseOG)
         ret = StartAircraftPhaseOG(gameMode, a2);
+
+    if (!gameMode) return ret;
 
     if (!bDev && bGameSessions) {
         API::GameServer(BackendUrl + "/solstice/api/v1/matchmaking/stop/by-address", IP, g_Port);
@@ -116,10 +119,10 @@ bool Misc::Listen() {
         return false;
     }
 
-    LOGI("[Listen] worldCtx OK = %p", worldCtx);
+    LOGI("[Listen] worldCtx = %p", worldCtx);
 
     FName driverName = MakeFName(L"GameNetDriver");
-    LOGI("[Listen] MakeFName(GameNetDriver) = %d", driverName.ComparisonIndex);
+    LOGI("[Listen] FName(GameNetDriver) = %d", driverName.ComparisonIndex);
 
     if (driverName.ComparisonIndex == 0) {
         LOGE("[Listen] FName 'GameNetDriver' not found");
