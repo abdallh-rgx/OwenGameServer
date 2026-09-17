@@ -12,6 +12,8 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <thread>
+#include <chrono>
 
 namespace Sarah {
 
@@ -183,31 +185,112 @@ void BuildOnce() {
     std::lock_guard<std::mutex> lock(g_mtx);
     if (g_built.load(std::memory_order_relaxed)) return;
 
-    const int32 total = 0x200000;
+    uintptr_t pool = Sarah::ImageBase + (uintptr_t)Off::GNames;
+    LOGI("[ND] pool=0x%llx", (unsigned long long)pool);
+
+    uintptr_t blocksPtr = 0;
+    std::memcpy(&blocksPtr, (void*)(pool + 0x40), sizeof(blocksPtr));
+    LOGI("[ND] blocksPtr=0x%llx", (unsigned long long)blocksPtr);
+
+    if (!blocksPtr) {
+        LOGE("[ND] blocksPtr NULL - FName pool not ready or GNames offset wrong");
+        return;
+    }
+
+    uintptr_t block0 = 0;
+    std::memcpy(&block0, (void*)blocksPtr, sizeof(block0));
+    LOGI("[ND] block0=0x%llx", (unsigned long long)block0);
+
+    if (!block0) {
+        LOGE("[ND] block0 NULL");
+        return;
+    }
+
+    uint16_t hdr = 0;
+    std::memcpy(&hdr, (void*)block0, sizeof(hdr));
+    LOGI("[ND] hdr=0x%04X len=%d wide=%d",
+         (unsigned)hdr, (int32)(hdr >> 6), (int)(hdr & 1));
+
+    const int32 total = 0x100000;
     g_map.reserve((size_t)total);
+
+    int32 emptyStreak = 0;
+    int32 maxIndex    = 0;
 
     for (int32 i = 0; i < total; ++i) {
         std::string s = NameRaw::ReadByIndex(i);
-        if (s.empty()) continue;
+        if (s.empty()) {
+            emptyStreak++;
+            if (emptyStreak >= 0x10000) {
+                LOGI("[ND] stopping at i=%d (%d consecutive empty)", i, emptyStreak);
+                break;
+            }
+            continue;
+        }
+        emptyStreak = 0;
+        maxIndex    = i;
 
         std::wstring ws = Enc::UTF8ToW(s.c_str(), s.size());
         if (ws.empty()) continue;
-
         g_map.try_emplace(std::move(ws), i);
     }
 
+    LOGI("[ND] map built: %zu names, maxIndex=%d", g_map.size(), maxIndex);
     g_built.store(true, std::memory_order_release);
 }
 
 int32 Lookup(const std::wstring& target) {
     BuildOnce();
-
     std::lock_guard<std::mutex> lock(g_mtx);
     auto it = g_map.find(target);
     return it == g_map.end() ? 0 : it->second;
 }
 
 } // namespace NameIndex
+
+bool WaitForNamePoolReady(int timeoutMs) {
+    LOGI("[ND] Waiting for FName pool to become ready...");
+
+    const int stepMs = 500;
+    const int maxTries = timeoutMs / stepMs;
+
+    for (int i = 0; i < maxTries; i++) {
+        uintptr_t pool = Sarah::ImageBase + (uintptr_t)Off::GNames;
+        if (!pool) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
+            continue;
+        }
+
+        uintptr_t blocksPtr = 0;
+        std::memcpy(&blocksPtr, (void*)(pool + 0x40), sizeof(blocksPtr));
+        if (!blocksPtr) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
+            continue;
+        }
+
+        uintptr_t block0 = 0;
+        std::memcpy(&block0, (void*)blocksPtr, sizeof(block0));
+        if (!block0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
+            continue;
+        }
+
+        uint16_t hdr = 0;
+        std::memcpy(&hdr, (void*)block0, sizeof(hdr));
+
+        const int len = (int32)(hdr >> 6);
+        if (len >= 3 && len <= 20) {
+            LOGI("[ND] FName pool ready after %d ms (hdr=0x%04X len=%d)",
+                 (i + 1) * stepMs, (unsigned)hdr, len);
+            return true;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
+    }
+
+    LOGE("[ND] FName pool never became ready after %d ms", timeoutMs);
+    return false;
+}
 
 } // namespace Sarah
 
@@ -230,6 +313,8 @@ FName MakeFName(const wchar_t* name) {
     if (index > 0) {
         std::lock_guard<std::mutex> lock(cacheMtx);
         cache[wname] = index;
+    } else {
+        LOGW("[MF] name not found: '%ls'", name);
     }
 
     return FName(index);
