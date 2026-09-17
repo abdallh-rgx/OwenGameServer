@@ -143,8 +143,7 @@ FName MakeFName(const wchar_t* name) {
     }
     u16.push_back(u'\0');
 
-    FString fs(reinterpret_cast<const uint8*>(u16.data()));
-
+    FString fs(reinterpret_cast<const TCHAR*>(u16.data()));
     FName result = UKismetStringLibrary::Conv_StringToName(fs);
 
     int32_t idx = result.ComparisonIndex;
