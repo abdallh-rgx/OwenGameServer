@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "UObject.hpp"
 #include "FName.hpp"
+#include "NameIndices.h"
 
 namespace Sarah {
 
@@ -59,14 +60,7 @@ TUObjectArray* InSDKUtils::GetGObjects() {
 }
 
 std::string InSDKUtils::GetNameByIndex(int32 Index) {
-    if (Index <= 0) return "";
-
-    FName inName{};
-    inName.ComparisonIndex = Index;
-
-    FString result = UKismetStringLibrary::Conv_NameToString(inName);
-    if (result.Num() == 0) return "";
-    return result.ToString();
+    return std::string(FNameIndices::IndexToName(Index));
 }
 
 UObject* InSDKUtils::GetObjectByIndex(int32 Index) {
