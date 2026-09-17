@@ -39,16 +39,8 @@ void Misc::TickFlush(void* driver, float dt) {
 
     if (!bDev) {
         static bool hasAClientConnected = false;
-        void** clientConnections = nullptr;
-        int32_t numConnections = 0;
-
-        __try {
-            clientConnections = *(void***)((uint8_t*)driver + 0x90);
-            numConnections = *(int32_t*)((uint8_t*)driver + 0x98);
-        } __except (1) {
-            clientConnections = nullptr;
-            numConnections = 0;
-        }
+        void** clientConnections = *(void***)((uint8_t*)driver + 0x90);
+        int32_t numConnections = *(int32_t*)((uint8_t*)driver + 0x98);
 
         if (!hasAClientConnected && numConnections > 0 && clientConnections != nullptr) {
             hasAClientConnected = true;
@@ -56,7 +48,7 @@ void Misc::TickFlush(void* driver, float dt) {
         }
 
         if (hasAClientConnected && numConnections == 0) {
-            LOGW("[TickFlush] All clients disconnected, but staying alive (Listen mode)");
+            LOGW("[TickFlush] All clients disconnected, staying alive (Listen mode)");
         }
     }
 
@@ -195,13 +187,7 @@ bool Misc::Listen() {
 
     LOGI("[Listen] Calling InitListen on port %d...", g_Port);
 
-    bool listenOk = false;
-    __try {
-        listenOk = initListen(netDriver, world, &url, false, nullptr);
-    } __except (1) {
-        LOGE("[Listen] InitListen crashed");
-        return false;
-    }
+    bool listenOk = initListen(netDriver, world, &url, false, nullptr);
 
     if (!listenOk) {
         LOGE("[Listen] InitListen returned false");
