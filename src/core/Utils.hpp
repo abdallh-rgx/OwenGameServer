@@ -6,10 +6,6 @@
 #include "AndroidBase.hpp"
 #include "FName.hpp"
 
-// UObject/UClass/AActor/UFunction come from the SDK (include/SDK.hpp) and are
-// visible through `using namespace SDK;` in pch.h. Re-declaring them in the
-// global namespace would make every unqualified use ambiguous.
-
 struct FVectorLocal {
     double X, Y, Z;
 };
@@ -92,6 +88,10 @@ inline TWeakObjectPtr<T> MakeWeakPtr(T* obj) {
 inline std::wstring FNameToWString(const FName& name) {
     std::string s = name.ToString();
     return std::wstring(s.begin(), s.end());
+}
+
+namespace Sarah {
+bool WaitForNamePoolReady(int timeoutMs = 60000);
 }
 
 class Utils {
