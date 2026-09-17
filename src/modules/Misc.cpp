@@ -122,7 +122,7 @@ bool Misc::StartAircraftPhase(AFortGameModeAthena* gameMode, char a2) {
                 static_cast<FVector&>(flightStart) = loc;
                 aircraft->FlightInfo.FlightStartLocation = flightStart;
             }
-            aircraft->FlightInfo.TimeTillFlightEnd = 7.f;
+            aircraft->FlightInfo.FlightTime = 7.f;
             aircraft->FlightInfo.TimeTillDropEnd = 0.f;
             aircraft->FlightInfo.TimeTillDropStart = 0.f;
             aircraft->FlightStartTime = UGameplayStatics::GetTimeSeconds(UWorld::GetWorld());
@@ -136,42 +136,48 @@ bool Misc::StartAircraftPhase(AFortGameModeAthena* gameMode, char a2) {
 }
 
 bool Misc::Listen() {
-    MLOG("[Listen] === Starting Listen ===");
+    volatile uint8_t* pGIsClient = (volatile uint8_t*)(Sarah::ImageBase + Off::GIsClient);
+    volatile uint8_t* pGIsServer = (volatile uint8_t*)(Sarah::ImageBase + Off::GIsServer);
 
-    MLOG("[Listen] A reading GWorld at offset 0x%llx", (unsigned long long)Off::GWorld);
+    uint8_t savedClient = *pGIsClient;
+    uint8_t savedServer = *pGIsServer;
+
+    MLOG("[Listen] === Starting Listen ===");
+    MLOG("[Listen] Saved GIsClient=%d GIsServer=%d", savedClient, savedServer);
+
+    *pGIsClient = 0;
+    *pGIsServer = 1;
+    MLOG("[Listen] Temp set Dedicated (Client=0, Server=1)");
+
     UWorld* world = *(UWorld**)(Sarah::ImageBase + Off::GWorld);
     MLOG("[Listen] B world=%p", world);
 
-    MLOG("[Listen] C reading GEngine at offset 0x%llx", (unsigned long long)Off::GEngine);
     UEngine* engine = *(UEngine**)(Sarah::ImageBase + Off::GEngine);
     MLOG("[Listen] D engine=%p", engine);
 
-    if (!world) {
-        MLOG("[Listen] FAIL: world is null");
+    if (!world || !engine) {
+        MLOG("[Listen] FAIL: world or engine null");
+        *pGIsClient = savedClient;
+        *pGIsServer = savedServer;
         return false;
     }
-    if (!engine) {
-        MLOG("[Listen] FAIL: engine is null");
-        return false;
-    }
-
-    MLOG("[Listen] E world ok");
 
     if (!world->PersistentLevel) {
         MLOG("[Listen] FAIL: PersistentLevel is null");
+        *pGIsClient = savedClient;
+        *pGIsServer = savedServer;
         return false;
     }
-    MLOG("[Listen] F PersistentLevel=%p", world->PersistentLevel);
 
     using GetWorldCtx_t = void* (*)(void*, void*);
     GetWorldCtx_t getWorldCtx = (GetWorldCtx_t)(Sarah::ImageBase + Off::GetWorldContext);
-    MLOG("[Listen] G GetWorldContext fn=%p", (void*)getWorldCtx);
-
     void* worldCtx = getWorldCtx(engine, world);
     MLOG("[Listen] H worldCtx=%p", worldCtx);
 
     if (!worldCtx) {
-        MLOG("[Listen] FAIL: worldCtx is null");
+        MLOG("[Listen] FAIL: worldCtx null");
+        *pGIsClient = savedClient;
+        *pGIsServer = savedServer;
         return false;
     }
 
@@ -180,6 +186,8 @@ bool Misc::Listen() {
 
     if (driverName.ComparisonIndex == 0) {
         MLOG("[Listen] FAIL: GameNetDriver name not found");
+        *pGIsClient = savedClient;
+        *pGIsServer = savedServer;
         return false;
     }
 
@@ -189,6 +197,10 @@ bool Misc::Listen() {
 
     void* netDriver = createND(engine, worldCtx, driverName);
     MLOG("[Listen] K netDriver=%p", netDriver);
+
+    *pGIsClient = savedClient;
+    *pGIsServer = savedServer;
+    MLOG("[Listen] Restored GIsClient=%d GIsServer=%d", savedClient, savedServer);
 
     if (!netDriver) {
         MLOG("[Listen] FAIL: CreateNetDriver returned null");
