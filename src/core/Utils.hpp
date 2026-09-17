@@ -90,10 +90,6 @@ inline std::wstring FNameToWString(const FName& name) {
     return std::wstring(s.begin(), s.end());
 }
 
-namespace Sarah {
-bool WaitForNamePoolReady(int timeoutMs = 60000);
-}
-
 class Utils {
 public:
     static UObject* FindObject(const wchar_t* path, UClass* cls = nullptr);
