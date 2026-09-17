@@ -401,7 +401,7 @@ void ProcessEventHook(UObject* context, UFunction* function, void* parms) {
 static int (*GetNetModeOG)(void*) = nullptr;
 
 static int GetNetModeHook(void* world) {
-    return 1;
+    return 2;
 }
 
 static EEFortTeam (*PickTeamOG)(AFortGameModeAthena*, uint8_t, AFortPlayerControllerAthena*) = nullptr;
