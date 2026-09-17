@@ -49,7 +49,6 @@ void Player::ServerAttemptAircraftJump(UObject* context, Params::UFortController
     auto playerController = CastSDK<AFortPlayerController>(component->GetOwner());
     if (!playerController) return;
 
-    auto playerState = (AFortPlayerStateAthena*)playerController->PlayerState;
     auto gameMode = (AFortGameModeAthena*)UWorld::GetWorld()->AuthorityGameMode;
     auto gameState = (AFortGameStateAthena*)UWorld::GetWorld()->GameState;
 
@@ -115,7 +114,12 @@ void Player::ServerPlayEmoteItem(UObject* context, Params::AFortPlayerController
 
     if (!playerController || !playerController->MyFortPawn || !asset) return;
 
-    auto abilitySystemComponent = ((AFortPlayerStateAthena*)playerController->PlayerState)->AbilitySystemComponent;
+    auto playerState = (AFortPlayerStateAthena*)playerController->PlayerState;
+    if (!playerState) return;
+
+    auto abilitySystemComponent = playerState->AbilitySystemComponent;
+    if (!abilitySystemComponent) return;
+
     UObject* abilityToUse = nullptr;
 
     if (asset->IsA(UAthenaSprayItemDefinition::StaticClass())) {
@@ -199,6 +203,8 @@ void Player::InternalPickup(AFortPlayerControllerAthena* pc, FFortItemEntry pick
         return;
 
     int maxStack = (int)Utils::EvaluateScalableFloat(pickupEntry.ItemDefinition->MaxStackSize);
+    if (maxStack <= 0) maxStack = 1;
+
     int itemCount = 0;
     for (auto& item : pc->WorldInventory->Inventory.ReplicatedEntries) {
         if (Inventory::GetQuickbar(item.ItemDefinition) == EEFortQuickBars::Primary)
@@ -290,7 +296,10 @@ void Player::ServerClientIsReadyToRespawn(UObject* context) {
         playerState->RespawnData.bClientIsReady = true;
 
         CoreUObject::FTransform transform = MakeTransform(playerState->RespawnData.RespawnLocation, playerState->RespawnData.RespawnRotation);
-        auto pawn = (AFortPlayerPawnAthena*)UWorld::GetWorld()->AuthorityGameMode->SpawnDefaultPawnAtTransform(playerController, transform);
+        auto gameMode = UWorld::GetWorld()->AuthorityGameMode;
+        if (!gameMode) return;
+
+        auto pawn = (AFortPlayerPawnAthena*)gameMode->SpawnDefaultPawnAtTransform(playerController, transform);
         playerController->Possess(pawn);
         if (pawn) {
             pawn->SetHealth(100);
@@ -312,6 +321,8 @@ void Player::OnCapsuleBeginOverlap(UObject* context, Params::AFortPlayerPawn_OnC
         return;
 
     auto maxStack = (int)Utils::EvaluateScalableFloat(pickup->PrimaryPickupItemEntry.ItemDefinition->MaxStackSize);
+    if (maxStack <= 0) maxStack = 1;
+
     auto itemEntry = ((AFortPlayerControllerAthena*)pawn->Controller)->WorldInventory->Inventory.ReplicatedEntries.Search([&](FFortItemEntry& entry) {
         return entry.ItemDefinition == pickup->PrimaryPickupItemEntry.ItemDefinition && entry.Count <= maxStack;
     });
@@ -343,11 +354,11 @@ static void GiveElimHeal(AFortPlayerPawnAthena* killerPawn) {
     auto health = killerPawn->GetHealth();
     auto shield = killerPawn->GetShield();
 
-    if (health == 100) {
-        shield = shield + 50;
+    if (health >= 100) {
+        shield += 50;
     } else if (health + 50 > 100) {
-        health = 100;
         shield += (health + 50) - 100;
+        health = 100;
     } else {
         health += 50;
     }
@@ -362,8 +373,14 @@ void Player::ClientOnPawnDied(AFortPlayerControllerAthena* playerController, FFo
         return;
     }
 
-    auto gameMode = (AFortGameModeAthena*)UWorld::GetWorld()->AuthorityGameMode;
-    auto gameState = (AFortGameStateAthena*)UWorld::GetWorld()->GameState;
+    auto world = UWorld::GetWorld();
+    if (!world) {
+        if (ClientOnPawnDiedOG) ClientOnPawnDiedOG(playerController, deathReport);
+        return;
+    }
+
+    auto gameMode = (AFortGameModeAthena*)world->AuthorityGameMode;
+    auto gameState = (AFortGameStateAthena*)world->GameState;
     auto playerState = (AFortPlayerStateAthena*)playerController->PlayerState;
 
     if (!gameMode || !gameState || !playerState) {
@@ -408,8 +425,8 @@ void Player::ClientOnPawnDied(AFortPlayerControllerAthena* playerController, FFo
             points = 15;
 
         for (auto& player : gameMode->AlivePlayers) {
-            auto controller = (AFortPlayerControllerAthena*)player;
-            controller->ClientReportTournamentPlacementPointsScored(5, points);
+            if (!player) continue;
+            player->ClientReportTournamentPlacementPointsScored(5, points);
         }
 
         Tournaments::Placement(playerCount, points);
@@ -430,7 +447,9 @@ void Player::ClientOnPawnDied(AFortPlayerControllerAthena* playerController, FFo
             std::string victimName = playerState->GetPlayerName().ToString();
             Results::SendEventMatchResults(victimName, eventId, { victimName }, {}, "", playerState->Place, playerState->KillScore, 0);
         }
-        LOGI("[Player] %s eliminated %s", killerPlayerState->GetPlayerName().ToString().c_str(), playerController->PlayerState->GetPlayerName().ToString().c_str());
+        LOGI("[Player] %s eliminated %s",
+            killerPlayerState->GetPlayerName().ToString().c_str(),
+            playerController->PlayerState->GetPlayerName().ToString().c_str());
 
         GiveElimHeal(killerPawn);
     }
@@ -462,35 +481,39 @@ void Player::ClientOnPawnDied(AFortPlayerControllerAthena* playerController, FFo
                 killerPawn = (AFortPlayerPawnAthena*)playerController->MyFortPawn;
             }
 
-            auto killerPlayerController = (AFortPlayerControllerAthena*)killerPlayerState->Owner;
+            if (killerPlayerState) {
+                auto killerPlayerController = (AFortPlayerControllerAthena*)killerPlayerState->Owner;
 
-            Tournaments::PlacementForController(killerPlayerController, 1);
+                if (killerPlayerController) {
+                    Tournaments::PlacementForController(killerPlayerController, 1);
 
-            killerPlayerController->PlayWinEffects(killerPawn, nullptr, playerState->DeathInfo.DeathCause, false);
-            killerPlayerController->ClientNotifyWon(killerPawn, nullptr, playerState->DeathInfo.DeathCause);
-            killerPlayerController->ClientNotifyTeamWon(killerPawn, nullptr, playerState->DeathInfo.DeathCause);
+                    killerPlayerController->PlayWinEffects(killerPawn, nullptr, playerState->DeathInfo.DeathCause, false);
+                    killerPlayerController->ClientNotifyWon(killerPawn, nullptr, playerState->DeathInfo.DeathCause);
+                    killerPlayerController->ClientNotifyTeamWon(killerPawn, nullptr, playerState->DeathInfo.DeathCause);
 
-            gameState->WinningTeam = killerPlayerState->TeamIndex;
-            gameState->OnRep_WinningTeam();
-            gameState->WinningPlayerState = killerPlayerState;
-            gameState->OnRep_WinningPlayerState();
+                    gameState->WinningTeam = killerPlayerState->TeamIndex;
+                    gameState->OnRep_WinningTeam();
+                    gameState->WinningPlayerState = killerPlayerState;
+                    gameState->OnRep_WinningPlayerState();
 
-            if (killerPlayerController != playerController && killerPlayerController->MatchReport) {
-                auto crown = Utils::Find<UFortItemDefinition>(L"/VictoryCrownsGameplay/Items/AGID_VictoryCrown.AGID_VictoryCrown");
-                if (crown) Inventory::GiveItem(killerPlayerController, crown, 1);
+                    if (killerPlayerController != playerController && killerPlayerController->MatchReport) {
+                        auto crown = Utils::Find<UFortItemDefinition>(L"/VictoryCrownsGameplay/Items/AGID_VictoryCrown.AGID_VictoryCrown");
+                        if (crown) Inventory::GiveItem(killerPlayerController, crown, 1);
 
-                killerPlayerController->ClientSendEndBattleRoyaleMatchForPlayer(true, killerPlayerController->MatchReport->EndOfMatchResults);
+                        killerPlayerController->ClientSendEndBattleRoyaleMatchForPlayer(true, killerPlayerController->MatchReport->EndOfMatchResults);
 
-                FAthenaMatchStats& killerStats = killerPlayerController->MatchReport->MatchStats;
-                FAthenaMatchTeamStats& killerTeamStats = killerPlayerController->MatchReport->TeamStats;
+                        FAthenaMatchStats& killerStats = killerPlayerController->MatchReport->MatchStats;
+                        FAthenaMatchTeamStats& killerTeamStats = killerPlayerController->MatchReport->TeamStats;
 
-                killerStats.Stats[3] = killerPlayerState->KillScore;
-                killerStats.Stats[8] = killerPlayerState->SquadId;
-                killerPlayerController->ClientSendMatchStatsForPlayer(killerStats);
+                        killerStats.Stats[3] = killerPlayerState->KillScore;
+                        killerStats.Stats[8] = killerPlayerState->SquadId;
+                        killerPlayerController->ClientSendMatchStatsForPlayer(killerStats);
 
-                killerTeamStats.Place = killerPlayerState->Place;
-                killerTeamStats.TotalPlayers = gameState->TotalPlayers;
-                killerPlayerController->ClientSendTeamStatsForPlayer(killerTeamStats);
+                        killerTeamStats.Place = killerPlayerState->Place;
+                        killerTeamStats.TotalPlayers = gameState->TotalPlayers;
+                        killerPlayerController->ClientSendTeamStatsForPlayer(killerTeamStats);
+                    }
+                }
             }
         }
     }
