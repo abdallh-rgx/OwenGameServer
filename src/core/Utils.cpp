@@ -216,7 +216,6 @@ FName MakeFName(const wchar_t* name) {
     static std::map<std::wstring, int32_t> cache;
 
     std::wstring wname(name);
-
     {
         std::lock_guard<std::mutex> lock(mtx);
         auto it = cache.find(wname);
@@ -225,28 +224,79 @@ FName MakeFName(const wchar_t* name) {
 
     std::u16string u16 = WToU16(name);
     if (u16.empty()) return FName{};
-    u16.push_back(u'\0');
 
-    struct FStringRaw {
-        char16_t* Data;
-        int32     NumElements;
-        int32     MaxElements;
-    };
+    int32_t found = 0;
 
-    FString fs;
-    FStringRaw& raw = reinterpret_cast<FStringRaw&>(fs);
-    raw.Data        = u16.data();
-    raw.NumElements = (int32)u16.size();
-    raw.MaxElements = raw.NumElements;
+    if (Sarah::ImageBase && Off::GNames) {
+        uintptr_t pool = Sarah::ImageBase + Off::GNames;
 
-    FName result = UKismetStringLibrary::Conv_StringToName(fs);
+        constexpr uint32_t Stride = 4;
+        constexpr uint32_t BlockSizeBytes = Stride * (1u << 16);
+        constexpr uint32_t MaxBlocks = 256;
+        uint32_t emptyBlocks = 0;
 
-    if (result.ComparisonIndex != 0) {
-        std::lock_guard<std::mutex> lock(mtx);
-        cache[wname] = result.ComparisonIndex;
+        for (uint32_t blockIdx = 0; blockIdx < MaxBlocks; blockIdx++) {
+            uintptr_t block = *(uintptr_t*)(pool + 0x40 + (uint64_t)blockIdx * 8);
+            if (!block) {
+                if (++emptyBlocks >= 6) break;
+                continue;
+            }
+            emptyBlocks = 0;
+
+            uint32_t byteOffset = 0;
+            while (byteOffset < BlockSizeBytes) {
+                uintptr_t entry = block + byteOffset;
+                uint16_t header = *(uint16_t*)entry;
+                int len = header >> 6;
+
+                if (len == 0) {
+                    byteOffset += 12;
+                    continue;
+                }
+                if (len > 1023) {
+                    byteOffset += Stride;
+                    continue;
+                }
+
+                bool wide = (header & 1) != 0;
+                uint32_t dataBytes = wide ? (uint32_t)(len + 1) * 2 : (uint32_t)(len + 1);
+                uint32_t entrySize = 4 + dataBytes;
+                uint32_t nextOffset = (entrySize + (Stride - 1)) & ~(Stride - 1);
+
+                if ((size_t)len == u16.size()) {
+                    bool match = false;
+                    if (wide) {
+                        const char16_t* str = (const char16_t*)(entry + 4);
+                        match = (memcmp(str, u16.data(),
+                                        u16.size() * sizeof(char16_t)) == 0);
+                    } else {
+                        const char* str = (const char*)(entry + 4);
+                        match = true;
+                        for (int j = 0; j < len; j++) {
+                            if ((unsigned char)str[j] != (unsigned char)u16[j]) {
+                                match = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (match) {
+                        found = (int32_t)((blockIdx << 16) | (byteOffset / Stride));
+                        break;
+                    }
+                }
+
+                byteOffset += nextOffset;
+            }
+            if (found) break;
+        }
     }
 
-    return result;
+    if (found != 0) {
+        std::lock_guard<std::mutex> lock(mtx);
+        cache[wname] = found;
+    }
+
+    return FName(found);
 }
 
 uint32_t MakeFNameIndex(const wchar_t* name) {
