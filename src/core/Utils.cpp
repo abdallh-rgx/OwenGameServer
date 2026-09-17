@@ -4,31 +4,42 @@
 #include "FName.hpp"
 
 #include <cstdlib>
+#include <cstring>
 #include <map>
 #include <mutex>
+#include <atomic>
+#include <string>
 
 namespace Sarah {
 
 std::atomic<uint32_t> GFastArrayIDCounter{1};
 
 void* EngineRealloc(void* ptr, int64_t newLen, uint32_t alignment) {
-    if (alignment <= 16) {
-        if (newLen == 0) {
-            free(ptr);
-            return nullptr;
-        }
-        return realloc(ptr, (size_t)newLen);
-    }
-    size_t aligned = (size_t)(alignment + 15) & ~(size_t)15;
     if (newLen == 0) {
-        free(ptr);
+        if (ptr) {
+            if (alignment > 16) {
+                void* original = *((void**)ptr - 1);
+                free(original);
+            } else {
+                free(ptr);
+            }
+        }
         return nullptr;
     }
+
+    if (alignment <= 16) {
+        return realloc(ptr, (size_t)newLen);
+    }
+
     void* original = ptr ? *((void**)ptr - 1) : nullptr;
-    if (ptr && !original) return nullptr;
-    void* raw = realloc(original, (size_t)newLen + aligned);
+
+    const size_t totalSize = (size_t)newLen + (size_t)alignment - 1 + sizeof(void*);
+    void* raw = realloc(original, totalSize);
     if (!raw) return nullptr;
-    uintptr_t addr = (uintptr_t)raw + aligned;
+
+    uintptr_t addr = ((uintptr_t)raw + sizeof(void*) + (uintptr_t)alignment - 1)
+                   & ~((uintptr_t)alignment - 1);
+
     *((void**)addr - 1) = raw;
     return (void*)addr;
 }
@@ -51,19 +62,18 @@ AActor* Utils::SpawnActor(UClass* cls, const FVector& loc, const FRotator& rot, 
     if (!cls) return nullptr;
 
     struct FSpawnParams {
-        void* Name;
-        AActor* Template;
-        AActor* Owner;
-        void* Instigator;
-        void* OverrideLevel;
-        void* OverrideParentComponent;
-        uint8_t SpawnCollisionHandlingOverride;
-        uint8_t bRemoteOwned : 1;
-        uint8_t bNoFail : 1;
-        uint8_t bDeferConstruction : 1;
-        uint8_t bAllowDuringConstructionScript : 1;
-        uint8_t NameMode;
-        uint32_t ObjectFlags;
+        FName            Name;
+        uint32_t         _pad0;
+        AActor*          Template;
+        AActor*          Owner;
+        APawn*           Instigator;
+        ULevel*          OverrideLevel;
+        UActorComponent* OverrideParentComponent;
+        uint8_t          SpawnCollisionHandlingOverride;
+        uint8_t          BitFlags;
+        uint8_t          NameMode;
+        uint8_t          _pad1;
+        uint32_t         ObjectFlags;
     };
 
     FSpawnParams params = {};
@@ -73,9 +83,9 @@ AActor* Utils::SpawnActor(UClass* cls, const FVector& loc, const FRotator& rot, 
 
     CoreUObject::FTransform transform = MakeTransform(loc, rot);
 
-    using t = AActor* (*)(void*, UClass*, CoreUObject::FTransform*, FSpawnParams*);
-    static t fn = nullptr;
-    if (!fn) fn = (t)(Sarah::ImageBase + Off::UWorld_SpawnActor);
+    using SpawnFn = AActor* (*)(UWorld*, UClass*, CoreUObject::FTransform*, FSpawnParams*);
+    static SpawnFn fn = nullptr;
+    if (!fn) fn = (SpawnFn)(Sarah::ImageBase + Off::UWorld_SpawnActor);
 
     UWorld* world = UWorld::GetWorld();
     if (!world) return nullptr;
@@ -103,7 +113,8 @@ float Utils::EvaluateScalableFloat(FScalableFloat& value) {
 
     float out = 0.f;
     FString ctx;
-    UDataTableFunctionLibrary::EvaluateCurveTableRow(value.Curve.CurveTable, value.Curve.RowName, 0.f, nullptr, &out, ctx);
+    UDataTableFunctionLibrary::EvaluateCurveTableRow(
+        value.Curve.CurveTable, value.Curve.RowName, 0.f, nullptr, &out, ctx);
     return out;
 }
 
@@ -113,25 +124,27 @@ float Utils::EvaluateCurve(FCurveTableRowHandle& handle, float inTime) {
 
     float out = 0.f;
     FString ctx;
-    UDataTableFunctionLibrary::EvaluateCurveTableRow(handle.CurveTable, handle.RowName, inTime, nullptr, &out, ctx);
+    UDataTableFunctionLibrary::EvaluateCurveTableRow(
+        handle.CurveTable, handle.RowName, inTime, nullptr, &out, ctx);
     return out;
 }
 
 void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj) {
     out.ObjectIndex = 0;
     out.ObjectSerialNumber = 0;
+
     if (!obj || !Sarah::GObjectsLayout.Initialized) return;
 
-    int32_t n = Sarah::UObjectManager::Num();
-    for (int32_t i = 0; i < n; i++) {
-        uint8_t* item = Sarah::GetItemByIndex(i);
-        if (!item) continue;
-        if (*(void**)item == obj) {
-            out.ObjectIndex = i;
-            out.ObjectSerialNumber = *(int32_t*)(item + 0x10) * 2;
-            return;
-        }
-    }
+    UObject* uobj = (UObject*)obj;
+    int32_t index = uobj->InternalIndex;
+
+    uint8_t* item = Sarah::GetItemByIndex(index);
+    if (!item) return;
+
+    if (*(void**)item != obj) return;
+
+    out.ObjectIndex = index;
+    out.ObjectSerialNumber = *(int32_t*)(item + 0x10) * 2;
 }
 
 FString Utils::ToFString(const std::wstring& s) {
@@ -199,7 +212,7 @@ void Utils::MarkArrayDirty(FFastArraySerializer& serializer) {
 FName MakeFName(const wchar_t* name) {
     FName empty{};
     empty.ComparisonIndex = 0;
-    if (!name) return empty;
+    if (!name || !name[0]) return empty;
 
     static std::mutex mtx;
     static std::map<std::wstring, int32_t> cache;
@@ -214,56 +227,81 @@ FName MakeFName(const wchar_t* name) {
         }
     }
 
+    if (!Sarah::ImageBase || !Off::GNames) return empty;
+
     uintptr_t pool = Sarah::ImageBase + Off::GNames;
-    if (!pool) return empty;
+    if (pool < 0x10000) return empty;
 
     std::u16string needle = WToU16(name);
+    if (needle.empty()) return empty;
+
     int32_t found = 0;
 
+    const uint32_t Stride = 4;
+    const uint32_t BlockSizeBytes = Stride * (1u << 16);
+    const uint32_t MaxBlocks = 256;
     uint32_t emptyBlocks = 0;
-    const uint32_t MaxBlocks = 64;
 
     for (uint32_t blockIdx = 0; blockIdx < MaxBlocks; blockIdx++) {
-        uintptr_t blockPtrAddr = pool + 0x40 + (uint64_t)blockIdx * 8;
-        uintptr_t block = *(uintptr_t*)blockPtrAddr;
+        uintptr_t block = *(uintptr_t*)(pool + 0x40 + (uint64_t)blockIdx * 8);
         if (!block) {
-            if (++emptyBlocks >= 3) break;
+            if (++emptyBlocks >= 6) break;
             continue;
         }
         emptyBlocks = 0;
 
-        for (uint32_t byteOffset = 0; byteOffset < 0xFFFF; byteOffset++) {
+        uint32_t byteOffset = 0;
+        while (byteOffset < BlockSizeBytes) {
             uintptr_t entry = block + byteOffset;
+
             uint16_t header = *(uint16_t*)entry;
             int len = header >> 6;
-            if (len <= 0 || len > 500) continue;
-            if ((size_t)len != needle.size()) continue;
 
-            if (header & 1) {
-                const char16_t* str = (const char16_t*)(entry + 4);
-                if (memcmp(str, needle.data(), (size_t)len * 2) == 0) {
-                    found = (int32_t)((blockIdx << 16) | byteOffset);
-                    break;
-                }
-            } else {
-                const char* str = (const char*)(entry + 4);
-                bool match = true;
-                for (int j = 0; j < len; j++) {
-                    if ((char16_t)(unsigned char)str[j] != needle[j]) {
-                        match = false;
-                        break;
+            if (len <= 0 || len > 1024) {
+                byteOffset += Stride;
+                continue;
+            }
+
+            bool wide = (header & 1) != 0;
+
+            uint32_t dataBytes = wide
+                ? (uint32_t)(len + 1) * 2
+                : (uint32_t)(len + 1);
+
+            uint32_t entrySize = 4 + dataBytes;
+            uint32_t nextOffset = (entrySize + (Stride - 1)) & ~(Stride - 1);
+
+            if ((size_t)len == needle.size()) {
+                bool match = false;
+
+                if (wide) {
+                    const char16_t* str = (const char16_t*)(entry + 4);
+                    match = (memcmp(str, needle.data(),
+                                    needle.size() * sizeof(char16_t)) == 0);
+                } else {
+                    const char* str = (const char*)(entry + 4);
+                    match = true;
+                    for (int j = 0; j < len; j++) {
+                        if ((unsigned char)str[j] != (unsigned char)needle[j]) {
+                            match = false;
+                            break;
+                        }
                     }
                 }
+
                 if (match) {
-                    found = (int32_t)((blockIdx << 16) | byteOffset);
+                    found = (int32_t)((blockIdx << 16) | (byteOffset / Stride));
                     break;
                 }
             }
+
+            byteOffset += nextOffset;
         }
+
         if (found) break;
     }
 
-    {
+    if (found != 0) {
         std::lock_guard<std::mutex> lock(mtx);
         cache[name] = found;
     }
@@ -283,15 +321,16 @@ namespace SDK {
 UObject* FWeakObjectPtr::Get() const {
     if (ObjectSerialNumber == 0 || ObjectIndex < 0)
         return nullptr;
+
     uint8_t* item = Sarah::GetItemByIndex(ObjectIndex);
-    if (!item)
-        return nullptr;
+    if (!item) return nullptr;
+
     UObject* obj = *(UObject**)item;
-    if (!obj)
-        return nullptr;
+    if (!obj) return nullptr;
+
     int32_t serial = *(int32_t*)(item + 0x10) * 2;
-    if (serial != ObjectSerialNumber)
-        return nullptr;
+    if (serial != ObjectSerialNumber) return nullptr;
+
     return obj;
 }
 
@@ -300,7 +339,8 @@ bool FWeakObjectPtr::IsValid() const {
 }
 
 bool FWeakObjectPtr::operator==(const FWeakObjectPtr& Other) const {
-    return ObjectIndex == Other.ObjectIndex && ObjectSerialNumber == Other.ObjectSerialNumber;
+    return ObjectIndex == Other.ObjectIndex
+        && ObjectSerialNumber == Other.ObjectSerialNumber;
 }
 
 bool FWeakObjectPtr::operator!=(const FWeakObjectPtr& Other) const {
