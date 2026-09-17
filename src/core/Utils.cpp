@@ -10,6 +10,8 @@
 #include <mutex>
 #include <atomic>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 namespace Sarah {
 
@@ -45,6 +47,126 @@ void* EngineRealloc(void* ptr, int64_t newLen, uint32_t alignment) {
     return (void*)addr;
 }
 
+namespace NameRaw {
+
+constexpr int32     kBlocksBit   = 0x10;
+constexpr int32     kStride      = 0x4;
+constexpr int32     kHeaderOff   = 0x0;
+constexpr int32     kStringOff   = 0x4;
+constexpr int32     kLengthShift = 0x6;
+constexpr uint16_t  kWideMask    = 0x1;
+constexpr int32     kMaxNameLen  = 255;
+constexpr uintptr_t kBlocksOff   = 0x40;
+
+inline uintptr_t GetBlocksBase() {
+    return *(uintptr_t*)(Sarah::GNames + kBlocksOff);
+}
+
+inline uintptr_t GetBlock(int32 blockIdx) {
+    uintptr_t base = GetBlocksBase();
+    if (!base) return 0;
+    return *(uintptr_t*)(base + (uintptr_t)blockIdx * sizeof(void*));
+}
+
+inline std::string ReadByIndex(int32 index) {
+    if (index < 0 || !Sarah::GNames) return "";
+
+    const int32 blockIdx = index >> kBlocksBit;
+    const int32 inBlock  = (index & ((1 << kBlocksBit) - 1)) * kStride;
+
+    uintptr_t block = GetBlock(blockIdx);
+    if (!block) return "";
+
+    uintptr_t entry = block + (uintptr_t)inBlock;
+
+    uint16_t hdr = 0;
+    std::memcpy(&hdr, (void*)(entry + kHeaderOff), sizeof(hdr));
+
+    int32 len  = (int32)(hdr >> kLengthShift);
+    bool  wide = (hdr & kWideMask) != 0;
+
+    if (len <= 0 || len > kMaxNameLen) return "";
+
+    const void* src = (void*)(entry + kStringOff);
+
+    if (wide) {
+        std::u16string u16((size_t)len, u'\0');
+        std::memcpy(u16.data(), src, (size_t)len * sizeof(char16_t));
+        return WToU8(U16ToW(u16.c_str(), u16.size()));
+    }
+
+    return std::string((const char*)src, (size_t)len);
+}
+
+} // namespace NameRaw
+
+namespace NameIndex {
+
+std::unordered_map<std::wstring, int32_t> g_map;
+std::mutex                                g_mtx;
+std::atomic<bool>                         g_built{false};
+
+void BuildOnce() {
+    if (g_built.load(std::memory_order_acquire)) return;
+
+    std::lock_guard<std::mutex> lock(g_mtx);
+    if (g_built.load(std::memory_order_relaxed)) return;
+
+    const int32 total = 0x200000;
+    g_map.reserve((size_t)total);
+
+    for (int32 i = 0; i < total; ++i) {
+        std::string s = NameRaw::ReadByIndex(i);
+        if (s.empty()) continue;
+
+        std::wstring ws = U8ToW(s.c_str(), s.size());
+        if (ws.empty()) continue;
+
+        g_map.try_emplace(std::move(ws), i);
+    }
+
+    g_built.store(true, std::memory_order_release);
+}
+
+int32 Lookup(const std::wstring& target) {
+    BuildOnce();
+
+    std::lock_guard<std::mutex> lock(g_mtx);
+    auto it = g_map.find(target);
+    return it == g_map.end() ? 0 : it->second;
+}
+
+} // namespace NameIndex
+
+} // namespace Sarah
+
+FName MakeFName(const wchar_t* name) {
+    if (!name || !name[0]) return FName{};
+
+    static std::mutex                      cacheMtx;
+    static std::map<std::wstring, int32_t> cache;
+
+    std::wstring wname(name);
+
+    {
+        std::lock_guard<std::mutex> lock(cacheMtx);
+        auto it = cache.find(wname);
+        if (it != cache.end()) return FName(it->second);
+    }
+
+    int32_t index = Sarah::NameIndex::Lookup(wname);
+
+    if (index > 0) {
+        std::lock_guard<std::mutex> lock(cacheMtx);
+        cache[wname] = index;
+    }
+
+    return FName(index);
+}
+
+uint32_t MakeFNameIndex(const wchar_t* name) {
+    FName n = MakeFName(name);
+    return (uint32_t)n.ComparisonIndex;
 }
 
 UObject* Utils::FindObject(const wchar_t* path, UClass* cls) {
@@ -208,50 +330,6 @@ void Utils::MarkItemDirty(FFastArraySerializer& serializer, FFastArraySerializer
 void Utils::MarkArrayDirty(FFastArraySerializer& serializer) {
     int32_t& arrayKey = *(int32_t*)((uint8_t*)&serializer + 0x54);
     arrayKey++;
-}
-
-FName MakeFName(const wchar_t* name) {
-    if (!name || !name[0]) return FName{};
-
-    static std::mutex mtx;
-    static std::map<std::wstring, int32_t> cache;
-
-    std::wstring wname(name);
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        auto it = cache.find(wname);
-        if (it != cache.end()) return FName(it->second);
-    }
-
-    std::u16string u16 = WToU16(name);
-    if (u16.empty()) return FName{};
-    u16.push_back(u'\0');
-
-    struct FStringRaw {
-        char16_t* Data;
-        int32     NumElements;
-        int32     MaxElements;
-    };
-
-    FString fs;
-    FStringRaw& raw = reinterpret_cast<FStringRaw&>(fs);
-    raw.Data        = u16.data();
-    raw.NumElements = (int32)u16.size();
-    raw.MaxElements = raw.NumElements;
-
-    FName result = UKismetStringLibrary::Conv_StringToName(fs);
-
-    if (result.ComparisonIndex != 0) {
-        std::lock_guard<std::mutex> lock(mtx);
-        cache[wname] = result.ComparisonIndex;
-    }
-
-    return result;
-}
-
-uint32_t MakeFNameIndex(const wchar_t* name) {
-    FName n = MakeFName(name);
-    return (uint32_t)n.ComparisonIndex;
 }
 
 namespace SDK {
