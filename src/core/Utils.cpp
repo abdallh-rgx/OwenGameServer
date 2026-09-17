@@ -67,7 +67,7 @@ AActor* Utils::SpawnActor(UClass* cls, const FVector& loc, const FRotator& rot, 
         AActor*                  Template;
         AActor*                  Owner;
         SDK::APawn*              Instigator;
-        SDK::ULevel*             OverrideLevel;
+        void*                    OverrideLevel;
         SDK::UActorComponent*    OverrideParentComponent;
         uint8_t                  SpawnCollisionHandlingOverride;
         uint8_t                  BitFlags;
