@@ -122,7 +122,7 @@ bool Misc::StartAircraftPhase(AFortGameModeAthena* gameMode, char a2) {
                 static_cast<FVector&>(flightStart) = loc;
                 aircraft->FlightInfo.FlightStartLocation = flightStart;
             }
-            aircraft->FlightInfo.FlightTime = 7.f;
+            aircraft->FlightInfo.TimeTillFlightEnd = 7.f;
             aircraft->FlightInfo.TimeTillDropEnd = 0.f;
             aircraft->FlightInfo.TimeTillDropStart = 0.f;
             aircraft->FlightStartTime = UGameplayStatics::GetTimeSeconds(UWorld::GetWorld());
