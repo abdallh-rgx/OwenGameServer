@@ -143,10 +143,48 @@ FName MakeFName(const wchar_t* name) {
     }
     u16.push_back(u'\0');
 
-    FString fs(reinterpret_cast<const TCHAR*>(u16.data()));
-    FName result = UKismetStringLibrary::Conv_StringToName(fs);
+    UClass* stringLibClass = (UClass*)Utils::FindObject(L"/Script/Engine.KismetStringLibrary");
+    if (!stringLibClass) {
+        LOGE("[MakeFName] KismetStringLibrary class not found");
+        return FName(0);
+    }
 
-    int32_t idx = result.ComparisonIndex;
+    UObject* stringLibCDO = stringLibClass->ClassDefaultObject;
+    if (!stringLibCDO) {
+        LOGE("[MakeFName] KismetStringLibrary CDO null");
+        return FName(0);
+    }
+
+    UFunction* convFn = (UFunction*)Utils::FindObject(L"/Script/Engine.KismetStringLibrary.Conv_StringToName");
+    if (!convFn) {
+        LOGE("[MakeFName] Conv_StringToName not found");
+        return FName(0);
+    }
+
+    struct {
+        char16_t* Data;
+        int32_t Num;
+        int32_t Max;
+        int32_t RetIdx;
+        int32_t RetNum;
+    } parms = {};
+
+    parms.Data = (char16_t*)u16.data();
+    parms.Num = (int32_t)(u16.size() - 1);
+    parms.Max = (int32_t)u16.size();
+
+    if (!Sarah::ProcessEventPtr) {
+        Sarah::ProcessEventPtr = (ProcessEvent_t)(Sarah::ImageBase + Off::ProcessEvent);
+    }
+    if (!Sarah::ProcessEventPtr) {
+        LOGE("[MakeFName] ProcessEventPtr null");
+        return FName(0);
+    }
+
+    Sarah::ProcessEventPtr(stringLibCDO, convFn, &parms);
+
+    int32_t idx = parms.RetIdx;
+    LOGI("[MakeFName] '%ls' -> idx=%d", wname.c_str(), idx);
 
     if (idx > 0) {
         std::lock_guard<std::mutex> lock(mtx);
