@@ -10,6 +10,10 @@
 #include <atomic>
 #include <string>
 
+class ULevel;
+class APawn;
+class UActorComponent;
+
 namespace Sarah {
 
 std::atomic<uint32_t> GFastArrayIDCounter{1};
@@ -135,8 +139,8 @@ void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj) {
 
     if (!obj || !Sarah::GObjectsLayout.Initialized) return;
 
-    UObject* uobj = (UObject*)obj;
-    int32_t index = uobj->InternalIndex;
+    int32_t index = *(int32_t*)((uint8_t*)obj + 0xC);
+    if (index < 0) return;
 
     uint8_t* item = Sarah::GetItemByIndex(index);
     if (!item) return;
