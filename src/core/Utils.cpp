@@ -10,10 +10,6 @@
 #include <atomic>
 #include <string>
 
-class ULevel;
-class APawn;
-class UActorComponent;
-
 namespace Sarah {
 
 std::atomic<uint32_t> GFastArrayIDCounter{1};
@@ -66,18 +62,18 @@ AActor* Utils::SpawnActor(UClass* cls, const FVector& loc, const FRotator& rot, 
     if (!cls) return nullptr;
 
     struct FSpawnParams {
-        FName            Name;
-        uint32_t         _pad0;
-        AActor*          Template;
-        AActor*          Owner;
-        APawn*           Instigator;
-        ULevel*          OverrideLevel;
-        UActorComponent* OverrideParentComponent;
-        uint8_t          SpawnCollisionHandlingOverride;
-        uint8_t          BitFlags;
-        uint8_t          NameMode;
-        uint8_t          _pad1;
-        uint32_t         ObjectFlags;
+        FName                    Name;
+        uint32_t                 _pad0;
+        AActor*                  Template;
+        AActor*                  Owner;
+        SDK::APawn*              Instigator;
+        SDK::ULevel*             OverrideLevel;
+        SDK::UActorComponent*    OverrideParentComponent;
+        uint8_t                  SpawnCollisionHandlingOverride;
+        uint8_t                  BitFlags;
+        uint8_t                  NameMode;
+        uint8_t                  _pad1;
+        uint32_t                 ObjectFlags;
     };
 
     FSpawnParams params = {};
