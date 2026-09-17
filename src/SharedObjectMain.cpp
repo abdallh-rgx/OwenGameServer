@@ -473,16 +473,19 @@ static void MainThread() {
         LOGF("[CORE] GObjects Num = %d", Sarah::UObjectManager::Num());
     }
 
-    LOGF("[CORE] Testing FName");
+    LOGF("[CORE] Testing FName (static table)");
     {
-        FName testName = MakeFName(L"PlayerController");
-        LOGF("[CORE] FName PlayerController index=%d", testName.ComparisonIndex);
+        FName t1 = MakeFName(L"PlayerController");
+        LOGF("[CORE] PlayerController idx=%d", t1.ComparisonIndex);
 
-        FName testName2 = MakeFName(L"GameNetDriver");
-        LOGF("[CORE] FName GameNetDriver index=%d", testName2.ComparisonIndex);
+        FName t2 = MakeFName(L"GameNetDriver");
+        LOGF("[CORE] GameNetDriver idx=%d", t2.ComparisonIndex);
 
-        FName testName3 = MakeFName(L"None");
-        LOGF("[CORE] FName None index=%d", testName3.ComparisonIndex);
+        FName t3 = MakeFName(L"None");
+        LOGF("[CORE] None idx=%d", t3.ComparisonIndex);
+
+        FName t4 = MakeFName(L"ByteProperty");
+        LOGF("[CORE] ByteProperty idx=%d", t4.ComparisonIndex);
     }
 
     LOGF("[CORE] Before SetDedicatedServerMode");
