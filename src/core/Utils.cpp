@@ -2,6 +2,7 @@
 #include "Utils.hpp"
 #include "UObject.hpp"
 #include "FName.hpp"
+#include "NameIndices.h"
 #include "SDK/Engine_classes.hpp"
 
 #include <cstdlib>
@@ -10,10 +11,7 @@
 #include <mutex>
 #include <atomic>
 #include <string>
-#include <unordered_map>
 #include <vector>
-#include <thread>
-#include <chrono>
 
 namespace Sarah {
 
@@ -115,185 +113,14 @@ inline std::wstring UTF16ToW(const char16_t* s, size_t len) {
     return out;
 }
 
-} // namespace Enc
-
-namespace NameRaw {
-
-constexpr int32     kBlocksBit   = 0x10;
-constexpr int32     kStride      = 0x4;
-constexpr int32     kHeaderOff   = 0x0;
-constexpr int32     kStringOff   = 0x4;
-constexpr int32     kLengthShift = 0x6;
-constexpr uint16_t  kWideMask    = 0x1;
-constexpr int32     kMaxNameLen  = 255;
-constexpr uintptr_t kBlocksOff   = 0x40;
-
-inline uintptr_t GetPool() {
-    return (uintptr_t)(Sarah::ImageBase + (uintptr_t)Off::GNames);
 }
 
-inline uintptr_t GetBlocksBase() {
-    return *(uintptr_t*)(GetPool() + kBlocksOff);
 }
-
-inline uintptr_t GetBlock(int32 blockIdx) {
-    uintptr_t base = GetBlocksBase();
-    if (!base) return 0;
-    return *(uintptr_t*)(base + (uintptr_t)blockIdx * sizeof(void*));
-}
-
-inline std::string ReadByIndex(int32 index) {
-    if (index < 0) return "";
-
-    const int32 blockIdx = index >> kBlocksBit;
-    const int32 inBlock  = (index & ((1 << kBlocksBit) - 1)) * kStride;
-
-    uintptr_t block = GetBlock(blockIdx);
-    if (!block) return "";
-
-    uintptr_t entry = block + (uintptr_t)inBlock;
-
-    uint16_t hdr = 0;
-    std::memcpy(&hdr, (void*)(entry + kHeaderOff), sizeof(hdr));
-
-    int32 len  = (int32)(hdr >> kLengthShift);
-    bool  wide = (hdr & kWideMask) != 0;
-
-    if (len <= 0 || len > kMaxNameLen) return "";
-
-    const void* src = (void*)(entry + kStringOff);
-
-    if (wide) {
-        std::wstring w = Enc::UTF16ToW((const char16_t*)src, (size_t)len);
-        return Enc::WToUTF8(w);
-    }
-
-    return std::string((const char*)src, (size_t)len);
-}
-
-} // namespace NameRaw
-
-namespace NameIndex {
-
-std::unordered_map<std::wstring, int32_t> g_map;
-std::mutex                                g_mtx;
-std::atomic<bool>                         g_built{false};
-
-void BuildOnce() {
-    if (g_built.load(std::memory_order_acquire)) return;
-
-    std::lock_guard<std::mutex> lock(g_mtx);
-    if (g_built.load(std::memory_order_relaxed)) return;
-
-    uintptr_t pool = Sarah::ImageBase + (uintptr_t)Off::GNames;
-    LOGI("[ND] Building name index from pool 0x%llx", (unsigned long long)pool);
-
-    uintptr_t blocksPtr = 0;
-    std::memcpy(&blocksPtr, (void*)(pool + 0x40), sizeof(blocksPtr));
-    if (!blocksPtr) {
-        LOGE("[ND] blocksPtr NULL - FName pool not ready");
-        return;
-    }
-
-    uintptr_t block0 = 0;
-    std::memcpy(&block0, (void*)blocksPtr, sizeof(block0));
-    if (!block0) {
-        LOGE("[ND] block0 NULL");
-        return;
-    }
-
-    uint16_t hdr = 0;
-    std::memcpy(&hdr, (void*)block0, sizeof(hdr));
-    LOGI("[ND] hdr=0x%04X len=%d wide=%d",
-         (unsigned)hdr, (int32)(hdr >> 6), (int)(hdr & 1));
-
-    const int32 total = 0x100000;
-    g_map.reserve((size_t)total);
-
-    int32 emptyStreak = 0;
-    int32 maxIndex    = 0;
-
-    for (int32 i = 0; i < total; ++i) {
-        std::string s = NameRaw::ReadByIndex(i);
-        if (s.empty()) {
-            emptyStreak++;
-            if (emptyStreak >= 0x10000) {
-                LOGI("[ND] stopping at i=%d (%d consecutive empty)", i, emptyStreak);
-                break;
-            }
-            continue;
-        }
-        emptyStreak = 0;
-        maxIndex    = i;
-
-        std::wstring ws = Enc::UTF8ToW(s.c_str(), s.size());
-        if (ws.empty()) continue;
-        g_map.try_emplace(std::move(ws), i);
-    }
-
-    LOGI("[ND] map built: %zu names, maxIndex=%d", g_map.size(), maxIndex);
-    g_built.store(true, std::memory_order_release);
-}
-
-int32 Lookup(const std::wstring& target) {
-    BuildOnce();
-    std::lock_guard<std::mutex> lock(g_mtx);
-    auto it = g_map.find(target);
-    return it == g_map.end() ? 0 : it->second;
-}
-
-} // namespace NameIndex
-
-bool WaitForNamePoolReady(int timeoutMs) {
-    LOGI("[ND] WaitForNamePoolReady: ImageBase=0x%llx",
-         (unsigned long long)Sarah::ImageBase);
-
-    const int stepMs   = 500;
-    const int maxTries = timeoutMs / stepMs;
-
-    for (int i = 0; i < maxTries; i++) {
-        uintptr_t pool = Sarah::ImageBase + (uintptr_t)Off::GNames;
-
-        uintptr_t blocksPtr = 0;
-        std::memcpy(&blocksPtr, (void*)(pool + 0x40), sizeof(blocksPtr));
-
-        uintptr_t block0 = 0;
-        uint16_t  hdr    = 0;
-
-        if (blocksPtr) {
-            std::memcpy(&block0, (void*)blocksPtr, sizeof(block0));
-            if (block0) {
-                std::memcpy(&hdr, (void*)block0, sizeof(hdr));
-            }
-        }
-
-        if (i == 0 || i == 5 || i == 20 || i == 60) {
-            LOGI("[ND] iter=%d pool=0x%llx blocks=0x%llx block0=0x%llx hdr=0x%04X",
-                 i,
-                 (unsigned long long)pool,
-                 (unsigned long long)blocksPtr,
-                 (unsigned long long)block0,
-                 (unsigned)hdr);
-        }
-
-        if (blocksPtr && block0) {
-            LOGI("[ND] FName pool ready at iter=%d", i);
-            return true;
-        }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
-    }
-
-    LOGE("[ND] FName pool NOT ready after %d ms", timeoutMs);
-    return false;
-}
-
-} // namespace Sarah
 
 FName MakeFName(const wchar_t* name) {
     if (!name || !name[0]) return FName{};
 
-    static std::mutex                      cacheMtx;
+    static std::mutex cacheMtx;
     static std::map<std::wstring, int32_t> cache;
 
     std::wstring wname(name);
@@ -304,16 +131,14 @@ FName MakeFName(const wchar_t* name) {
         if (it != cache.end()) return FName(it->second);
     }
 
-    int32_t index = Sarah::NameIndex::Lookup(wname);
+    int32_t idx = FNameIndices::LookupW(name);
 
-    if (index > 0) {
+    if (idx > 0) {
         std::lock_guard<std::mutex> lock(cacheMtx);
-        cache[wname] = index;
-    } else {
-        LOGW("[MF] name not found: '%ls'", name);
+        cache[wname] = idx;
     }
 
-    return FName(index);
+    return FName(idx);
 }
 
 uint32_t MakeFNameIndex(const wchar_t* name) {
