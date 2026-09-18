@@ -13,7 +13,6 @@
 
 #include <cstdio>
 #include <cstdarg>
-#include <cstring>
 #include <mutex>
 #include <unistd.h>
 
@@ -29,7 +28,7 @@ static void InitLogFile() {
     };
 
     for (auto path : paths) {
-        FILE* f = fopen(path, "a");
+        FILE* f = fopen(path, "w");
         if (f) {
             g_logfile = f;
             return;
@@ -39,6 +38,7 @@ static void InitLogFile() {
 
 static void LOGF(const char* fmt, ...) {
     char buf[4096];
+
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
@@ -51,16 +51,6 @@ static void LOGF(const char* fmt, ...) {
         fprintf(g_logfile, "%s\n", buf);
         fflush(g_logfile);
     }
-}
-
-static bool IsGameServerProcess() {
-    char cmdline[256] = {0};
-    FILE* f = fopen("/proc/self/cmdline", "r");
-    if (f) {
-        fread(cmdline, 1, sizeof(cmdline) - 1, f);
-        fclose(f);
-    }
-    return strstr(cmdline, ":gameserver") != nullptr;
 }
 
 static void (*ProcessEventOG)(UObject*, UFunction*, void*) = nullptr;
@@ -321,14 +311,20 @@ static int GetNetModeHook(void* world) {
 static EEFortTeam (*PickTeamOG)(AFortGameModeAthena*, uint8_t, AFortPlayerControllerAthena*) = nullptr;
 
 static EEFortTeam PickTeamHook(AFortGameModeAthena* gameMode, uint8_t preferredTeam, AFortPlayerControllerAthena* controller) {
+    LOGF("[HOOK] PickTeam");
     return GameMode::PickTeam(gameMode, preferredTeam, controller);
 }
 
 static APawn* (*SpawnDefaultPawnForOG)(AGameModeBase*, AController*, AActor*) = nullptr;
 
 static APawn* SpawnDefaultPawnForHook(AGameModeBase* gameMode, AController* newPlayer, AActor* startSpot) {
+    LOGF("[HOOK] SpawnDefaultPawnFor");
     APawn* result = GameMode::SpawnDefaultPawnFor(gameMode, newPlayer, startSpot);
-    if (result) return result;
+    if (result) {
+        LOGF("[HOOK] SpawnDefaultPawnFor returned pawn");
+        return result;
+    }
+    LOGF("[HOOK] SpawnDefaultPawnFor returned null");
     if (SpawnDefaultPawnForOG)
         return SpawnDefaultPawnForOG(gameMode, newPlayer, startSpot);
     return nullptr;
@@ -346,215 +342,186 @@ static void WaitForWorld() {
     LOGF("[CORE] World wait timeout");
 }
 
-static void InstallServerHooks() {
-    DobbyHook((void*)(Sarah::ImageBase + Off::ProcessEvent), (void*)ProcessEventHook, (void**)&ProcessEventOG);
-    LOGF("[HOOKS] ProcessEvent installed");
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
-    LOGF("[HOOKS] GetNetMode installed");
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
-    LOGF("[HOOKS] TickFlush installed");
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::ClientOnPawnDied), (void*)Player::ClientOnPawnDied, (void**)&Player::ClientOnPawnDiedOG);
-    LOGF("[HOOKS] ClientOnPawnDied installed");
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::BuildingActor_OnDamageServer), (void*)Building::OnDamageServer, (void**)&Building::BuildingActor_OnDamageServerOG);
-    LOGF("[HOOKS] BuildingActor_OnDamageServer installed");
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::PickTeam), (void*)PickTeamHook, (void**)&PickTeamOG);
-    LOGF("[HOOKS] PickTeam installed");
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::StartAircraftPhase), (void*)Misc::StartAircraftPhase, (void**)&Misc::StartAircraftPhaseOG);
-    LOGF("[HOOKS] StartAircraftPhase installed");
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::SpawnDefaultPawnFor), (void*)SpawnDefaultPawnForHook, (void**)&SpawnDefaultPawnForOG);
-    LOGF("[HOOKS] SpawnDefaultPawnFor installed");
-
-    if (bGameSessions) {
-        PatchBytes<uint8_t>(Off::GameSessionPatch, 0x85);
-        LOGF("[PATCH] GameSession patch applied");
-    }
-}
-
-static void MainThreadServer() {
-    LOGF("[SRV] === Server process main thread ===");
+static void MainThread() {
+    LOGF("[MAIN] MainThread started");
 
     std::this_thread::sleep_for(std::chrono::seconds(5));
+    LOGF("[MAIN] Initial delay finished");
 
     if (!InitImageBase()) {
-        LOGF("[SRV] InitImageBase FAILED");
+        LOGF("[MAIN] InitImageBase FAILED");
         return;
     }
-    LOGF("[SRV] ImageBase = 0x%lx", Sarah::ImageBase);
+    LOGF("[MAIN] libUnreal found");
+    LOGF("[MAIN] ImageBase = 0x%lx", Sarah::ImageBase);
 
     WaitForWorld();
 
+    LOGF("[CORE] Initializing GObjects");
     if (!Sarah::InitGObjectsLayout()) {
-        LOGF("[SRV] GObjects layout FAILED");
-        return;
+        LOGF("[CORE] GObjects layout validation FAILED");
+    } else {
+        LOGF("[CORE] GObjects layout OK");
+        LOGF("[CORE] GObjects Num = %d", Sarah::UObjectManager::Num());
     }
-    LOGF("[SRV] GObjects Num = %d", Sarah::UObjectManager::Num());
+
+    LOGF("[CORE] Before SetDedicatedServerMode");
+    LOGF("[CORE] GIsEditor=%d GIsClient=%d GIsServer=%d",
+         GetGIsEditor(), GetGIsClient(), GetGIsServer());
 
     SetDedicatedServerMode();
-    LOGF("[SRV] Dedicated mode set: GIsClient=%d GIsServer=%d", GetGIsClient(), GetGIsServer());
+
+    LOGF("[CORE] After SetDedicatedServerMode");
+    LOGF("[CORE] GIsEditor=%d GIsClient=%d GIsServer=%d",
+         GetGIsEditor(), GetGIsClient(), GetGIsServer());
 
     srand((uint32_t)time(nullptr));
 
-    LOGF("[SRV] Caching functions");
+    LOGF("[HOOKS] Caching functions");
     Hooks::CacheFunctions();
 
+    // ================================================================
+    // 1) MAP TRAVEL FIRST (no hooks yet!)
+    // ================================================================
+    LOGF("[MAP] Starting map travel (no hooks yet)");
+
     UWorld* oldWorld = UWorld::GetWorld();
-    LOGF("[SRV] oldWorld = %p", oldWorld);
+    LOGF("[MAP] oldWorld = %p", oldWorld);
 
-    static char16_t cmdBuf[512];
-    const wchar_t* cmd = bCreative
-        ? L"open Creative_NoApollo_Terrain"
-        : L"open Artemis_Terrain";
+    {
+        static char16_t cmdBuf[512];
+        const wchar_t* cmd = bCreative
+            ? L"open Creative_NoApollo_Terrain"
+            : L"open Artemis_Terrain";
 
-    int len = 0;
-    for (const wchar_t* p = cmd; *p && len < 500; p++) {
-        cmdBuf[len++] = (char16_t)(*p);
+        int len = 0;
+        for (const wchar_t* p = cmd; *p && len < 500; p++) {
+            cmdBuf[len++] = (char16_t)(*p);
+        }
+        cmdBuf[len] = 0;
+
+        LOGF("[MAP] cmd='%ls' len=%d", cmd, len);
+
+        struct FStringLocal {
+            char16_t* Data;
+            int32_t Num;
+            int32_t Max;
+        };
+
+        struct ExecCmdParams {
+            UObject* WorldContextObject;
+            FStringLocal Command;
+            APlayerController* SpecificPlayer;
+        };
+
+        UFunction* execFn = (UFunction*)Utils::FindObject(
+            L"/Script/Engine.KismetSystemLibrary.ExecuteConsoleCommand");
+        UClass* kslClass = (UClass*)Utils::FindObject(
+            L"/Script/Engine.KismetSystemLibrary");
+
+        LOGF("[MAP] execFn=%p kslClass=%p", execFn, kslClass);
+
+        if (execFn && kslClass && kslClass->ClassDefaultObject) {
+            ExecCmdParams parms = {};
+            parms.WorldContextObject = oldWorld;
+            parms.Command.Data = cmdBuf;
+            parms.Command.Num = len;
+            parms.Command.Max = len + 1;
+            parms.SpecificPlayer = nullptr;
+
+            LOGF("[MAP] Calling ProcessEvent...");
+            Sarah::CallProcessEvent(kslClass->ClassDefaultObject, execFn, &parms);
+            LOGF("[MAP] ExecuteConsoleCommand returned");
+        } else {
+            LOGF("[MAP] FAIL: cannot find ExecuteConsoleCommand");
+            return;
+        }
     }
-    cmdBuf[len] = 0;
 
-    struct FStringLocal {
-        char16_t* Data;
-        int32_t Num;
-        int32_t Max;
-    };
-
-    struct ExecCmdParams {
-        UObject* WorldContextObject;
-        FStringLocal Command;
-        APlayerController* SpecificPlayer;
-    };
-
-    UFunction* execFn = (UFunction*)Utils::FindObject(
-        L"/Script/Engine.KismetSystemLibrary.ExecuteConsoleCommand");
-    UClass* kslClass = (UClass*)Utils::FindObject(
-        L"/Script/Engine.KismetSystemLibrary");
-
-    if (execFn && kslClass && kslClass->ClassDefaultObject) {
-        ExecCmdParams parms = {};
-        parms.WorldContextObject = oldWorld;
-        parms.Command.Data = cmdBuf;
-        parms.Command.Num = len;
-        parms.Command.Max = len + 1;
-        parms.SpecificPlayer = nullptr;
-
-        Sarah::CallProcessEvent(kslClass->ClassDefaultObject, execFn, &parms);
-        LOGF("[SRV] ExecuteConsoleCommand returned");
-    } else {
-        LOGF("[SRV] FAIL: ExecuteConsoleCommand not found");
-        return;
-    }
+    LOGF("[MAP] Map travel requested, waiting for new world...");
 
     UWorld* newWorld = nullptr;
     for (int i = 0; i < 60; i++) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
+
         UWorld* w = UWorld::GetWorld();
         if (w && w != oldWorld && w->PersistentLevel) {
             newWorld = w;
-            LOGF("[SRV] New world ready: %p (attempt %d)", w, i + 1);
+            LOGF("[MAP] New world ready at attempt %d: %p", i + 1, w);
             break;
         }
+        LOGF("[MAP] waiting for new world... attempt %d", i + 1);
     }
 
     if (!newWorld) {
-        LOGF("[SRV] FAIL: new world never appeared");
+        LOGF("[MAP] FAIL: new world never appeared");
         return;
     }
 
-    std::this_thread::sleep_for(std::chrono::seconds(5));
+    LOGF("[MAP] New world settled, waiting 5s more...");
+    for (int i = 0; i < 5; i++) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        LOGF("[MAP] settle %d/5", i + 1);
+    }
 
-    LOGF("[SRV] Installing hooks");
-    InstallServerHooks();
+    // ================================================================
+    // 2) NOW INSTALL HOOKS (on new world)
+    // ================================================================
+    LOGF("[HOOKS] Installing ProcessEvent");
+    DobbyHook((void*)(Sarah::ImageBase + Off::ProcessEvent), (void*)ProcessEventHook, (void**)&ProcessEventOG);
+    LOGF("[HOOKS] ProcessEvent installed");
 
-    LOGF("[SRV] Starting Listen");
+    LOGF("[HOOKS] Installing GetNetMode");
+    DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
+    LOGF("[HOOKS] GetNetMode installed");
+
+    LOGF("[HOOKS] Installing TickFlush");
+    DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
+    LOGF("[HOOKS] TickFlush installed");
+
+    LOGF("[HOOKS] Installing ClientOnPawnDied");
+    DobbyHook((void*)(Sarah::ImageBase + Off::ClientOnPawnDied), (void*)Player::ClientOnPawnDied, (void**)&Player::ClientOnPawnDiedOG);
+    LOGF("[HOOKS] ClientOnPawnDied installed");
+
+    LOGF("[HOOKS] Installing BuildingActor_OnDamageServer");
+    DobbyHook((void*)(Sarah::ImageBase + Off::BuildingActor_OnDamageServer), (void*)Building::OnDamageServer, (void**)&Building::BuildingActor_OnDamageServerOG);
+    LOGF("[HOOKS] BuildingActor_OnDamageServer installed");
+
+    LOGF("[HOOKS] Installing PickTeam");
+    DobbyHook((void*)(Sarah::ImageBase + Off::PickTeam), (void*)PickTeamHook, (void**)&PickTeamOG);
+    LOGF("[HOOKS] PickTeam installed");
+
+    LOGF("[HOOKS] Installing StartAircraftPhase");
+    DobbyHook((void*)(Sarah::ImageBase + Off::StartAircraftPhase), (void*)Misc::StartAircraftPhase, (void**)&Misc::StartAircraftPhaseOG);
+    LOGF("[HOOKS] StartAircraftPhase installed");
+
+    LOGF("[HOOKS] Installing SpawnDefaultPawnFor");
+    DobbyHook((void*)(Sarah::ImageBase + Off::SpawnDefaultPawnFor), (void*)SpawnDefaultPawnForHook, (void**)&SpawnDefaultPawnForOG);
+    LOGF("[HOOKS] SpawnDefaultPawnFor installed");
+
+    if (bGameSessions) {
+        LOGF("[PATCH] Applying GameSession patch");
+        PatchBytes<uint8_t>(Off::GameSessionPatch, 0x85);
+        LOGF("[PATCH] GameSession patch applied");
+    }
+
+    LOGF("[CORE] All hooks installed");
+
+    // ================================================================
+    // 3) NOW LISTEN
+    // ================================================================
+    LOGF("[CORE] Starting Listen");
+
     if (Misc::Listen()) {
-        LOGF("[SRV] Server is listening");
+        LOGF("[CORE] Server is listening");
     } else {
-        LOGF("[SRV] Listen FAILED");
+        LOGF("[CORE] Listen FAILED");
     }
 
-    LOGF("[SRV] Server main thread done");
-}
-
-static void MainThreadClient() {
-    LOGF("[CLI] === Client process main thread ===");
-    LOGF("[CLI] Nothing to do for client. Server runs in :gameserver process.");
-}
-
-static void MainThread() {
-    LOGF("[MAIN] MainThread started");
-
-    bool isServer = IsGameServerProcess();
-    LOGF("[MAIN] IsGameServerProcess = %d", isServer ? 1 : 0);
-
-    if (isServer) {
-        MainThreadServer();
-    } else {
-        MainThreadClient();
-    }
-}
-
-static JavaVM* g_vm = nullptr;
-
-static void StartServerService(JNIEnv* env, jobject context) {
-    jclass intentClass = env->FindClass("android/content/Intent");
-    if (!intentClass) {
-        LOGF("[JNI] Intent not found");
-        return;
-    }
-
-    jclass serviceClass = env->FindClass("com/epicgames/fortnite/GameServerService");
-    if (!serviceClass) {
-        LOGF("[JNI] GameServerService not found");
-        return;
-    }
-
-    jmethodID intentCtor = env->GetMethodID(intentClass, "<init>",
-        "(Landroid/content/Context;Ljava/lang/Class;)V");
-    if (!intentCtor) {
-        LOGF("[JNI] Intent ctor not found");
-        return;
-    }
-
-    jobject intent = env->NewObject(intentClass, intentCtor, context, serviceClass);
-    if (!intent) {
-        LOGF("[JNI] Intent creation failed");
-        return;
-    }
-
-    jclass contextClass = env->GetObjectClass(context);
-    jmethodID startServiceMethod = env->GetMethodID(contextClass, "startService",
-        "(Landroid/content/Intent;)Landroid/content/ComponentName;");
-
-    if (startServiceMethod) {
-        env->CallObjectMethod(context, startServiceMethod, intent);
-        LOGF("[JNI] startService called");
-    } else {
-        LOGF("[JNI] startService method not found");
-    }
-
-    env->DeleteLocalRef(intent);
-    env->DeleteLocalRef(intentClass);
-    env->DeleteLocalRef(serviceClass);
-    env->DeleteLocalRef(contextClass);
-}
-
-extern "C" JNIEXPORT void JNICALL
-Java_com_epicgames_fortnite_GameActivity_NativeStartServer(
-    JNIEnv* env, jclass clazz, jobject context) {
-
-    LOGF("[JNI] NativeStartServer called");
-    InitLogFile();
-    StartServerService(env, context);
+    LOGF("[CORE] MainThread done");
 }
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
-    g_vm = vm;
     InitLogFile();
 
     LOGF("========================================");
