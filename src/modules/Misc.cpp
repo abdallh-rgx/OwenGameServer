@@ -202,16 +202,26 @@ bool Misc::Listen() {
         return false;
     }
 
-    void* netDriver = UGameplayStatics::SpawnObject(ipNetDriverClass, world);
-    MLOG("[Listen] K netDriver=%p  world=%p  engine=%p  worldCtx=%p",
-         netDriver, world, engine, worldCtx);
+    using NewObj_t = void* (*)(void*, void*, FName, int, int, void*);
+    NewObj_t newObjectFn = (NewObj_t)(Sarah::ImageBase + 0x762cfb8);
+    MLOG("[Listen] J2 NewObject fn=%p", (void*)newObjectFn);
+
+    void* netDriver = newObjectFn(
+        world,
+        ipNetDriverClass,
+        driverName,
+        0,
+        0,
+        nullptr
+    );
+    MLOG("[Listen] K netDriver=%p", netDriver);
 
     *pGIsClient = savedClient;
     *pGIsServer = savedServer;
     MLOG("[Listen] Restored GIsClient=%d GIsServer=%d", savedClient, savedServer);
 
     if (!netDriver) {
-        MLOG("[Listen] FAIL: SpawnObject returned null");
+        MLOG("[Listen] FAIL: NewObject returned null");
         return false;
     }
 
