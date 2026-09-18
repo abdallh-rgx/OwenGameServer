@@ -380,50 +380,10 @@ static void MainThread() {
     LOGF("[HOOKS] Caching functions");
     Hooks::CacheFunctions();
 
-    LOGF("[HOOKS] Installing ProcessEvent");
-    DobbyHook((void*)(Sarah::ImageBase + Off::ProcessEvent), (void*)ProcessEventHook, (void**)&ProcessEventOG);
-    LOGF("[HOOKS] ProcessEvent installed");
-
-    LOGF("[HOOKS] Installing GetNetMode");
-    DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
-    LOGF("[HOOKS] GetNetMode installed");
-
-    LOGF("[HOOKS] Installing TickFlush");
-    DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
-    LOGF("[HOOKS] TickFlush installed");
-
-    LOGF("[HOOKS] Installing ClientOnPawnDied");
-    DobbyHook((void*)(Sarah::ImageBase + Off::ClientOnPawnDied), (void*)Player::ClientOnPawnDied, (void**)&Player::ClientOnPawnDiedOG);
-    LOGF("[HOOKS] ClientOnPawnDied installed");
-
-    LOGF("[HOOKS] Installing BuildingActor_OnDamageServer");
-    DobbyHook((void*)(Sarah::ImageBase + Off::BuildingActor_OnDamageServer), (void*)Building::OnDamageServer, (void**)&Building::BuildingActor_OnDamageServerOG);
-    LOGF("[HOOKS] BuildingActor_OnDamageServer installed");
-
-    LOGF("[HOOKS] Installing PickTeam");
-    DobbyHook((void*)(Sarah::ImageBase + Off::PickTeam), (void*)PickTeamHook, (void**)&PickTeamOG);
-    LOGF("[HOOKS] PickTeam installed");
-
-    LOGF("[HOOKS] Installing StartAircraftPhase");
-    DobbyHook((void*)(Sarah::ImageBase + Off::StartAircraftPhase), (void*)Misc::StartAircraftPhase, (void**)&Misc::StartAircraftPhaseOG);
-    LOGF("[HOOKS] StartAircraftPhase installed");
-
-    LOGF("[HOOKS] Installing SpawnDefaultPawnFor");
-    DobbyHook((void*)(Sarah::ImageBase + Off::SpawnDefaultPawnFor), (void*)SpawnDefaultPawnForHook, (void**)&SpawnDefaultPawnForOG);
-    LOGF("[HOOKS] SpawnDefaultPawnFor installed");
-
-    if (bGameSessions) {
-        LOGF("[PATCH] Applying GameSession patch");
-        PatchBytes<uint8_t>(Off::GameSessionPatch, 0x85);
-        LOGF("[PATCH] GameSession patch applied");
-    }
-
-    LOGF("[CORE] All hooks installed");
-
     // ================================================================
-    // 1) MAP TRAVEL — استدعاء ProcessEvent مباشرة (بدون SDK wrapper)
+    // 1) MAP TRAVEL FIRST (no hooks yet!)
     // ================================================================
-    LOGF("[MAP] Starting map travel");
+    LOGF("[MAP] Starting map travel (no hooks yet)");
 
     UWorld* oldWorld = UWorld::GetWorld();
     LOGF("[MAP] oldWorld = %p", oldWorld);
@@ -474,6 +434,7 @@ static void MainThread() {
             LOGF("[MAP] ExecuteConsoleCommand returned");
         } else {
             LOGF("[MAP] FAIL: cannot find ExecuteConsoleCommand");
+            return;
         }
     }
 
@@ -489,6 +450,7 @@ static void MainThread() {
             LOGF("[MAP] New world ready at attempt %d: %p", i + 1, w);
             break;
         }
+        LOGF("[MAP] waiting for new world... attempt %d", i + 1);
     }
 
     if (!newWorld) {
@@ -496,11 +458,57 @@ static void MainThread() {
         return;
     }
 
-    LOGF("[MAP] World settled, waiting 10s before Listen...");
-    std::this_thread::sleep_for(std::chrono::seconds(10));
+    LOGF("[MAP] New world settled, waiting 5s more...");
+    for (int i = 0; i < 5; i++) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        LOGF("[MAP] settle %d/5", i + 1);
+    }
 
     // ================================================================
-    // 2) THEN LISTEN
+    // 2) NOW INSTALL HOOKS (on new world)
+    // ================================================================
+    LOGF("[HOOKS] Installing ProcessEvent");
+    DobbyHook((void*)(Sarah::ImageBase + Off::ProcessEvent), (void*)ProcessEventHook, (void**)&ProcessEventOG);
+    LOGF("[HOOKS] ProcessEvent installed");
+
+    LOGF("[HOOKS] Installing GetNetMode");
+    DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
+    LOGF("[HOOKS] GetNetMode installed");
+
+    LOGF("[HOOKS] Installing TickFlush");
+    DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
+    LOGF("[HOOKS] TickFlush installed");
+
+    LOGF("[HOOKS] Installing ClientOnPawnDied");
+    DobbyHook((void*)(Sarah::ImageBase + Off::ClientOnPawnDied), (void*)Player::ClientOnPawnDied, (void**)&Player::ClientOnPawnDiedOG);
+    LOGF("[HOOKS] ClientOnPawnDied installed");
+
+    LOGF("[HOOKS] Installing BuildingActor_OnDamageServer");
+    DobbyHook((void*)(Sarah::ImageBase + Off::BuildingActor_OnDamageServer), (void*)Building::OnDamageServer, (void**)&Building::BuildingActor_OnDamageServerOG);
+    LOGF("[HOOKS] BuildingActor_OnDamageServer installed");
+
+    LOGF("[HOOKS] Installing PickTeam");
+    DobbyHook((void*)(Sarah::ImageBase + Off::PickTeam), (void*)PickTeamHook, (void**)&PickTeamOG);
+    LOGF("[HOOKS] PickTeam installed");
+
+    LOGF("[HOOKS] Installing StartAircraftPhase");
+    DobbyHook((void*)(Sarah::ImageBase + Off::StartAircraftPhase), (void*)Misc::StartAircraftPhase, (void**)&Misc::StartAircraftPhaseOG);
+    LOGF("[HOOKS] StartAircraftPhase installed");
+
+    LOGF("[HOOKS] Installing SpawnDefaultPawnFor");
+    DobbyHook((void*)(Sarah::ImageBase + Off::SpawnDefaultPawnFor), (void*)SpawnDefaultPawnForHook, (void**)&SpawnDefaultPawnForOG);
+    LOGF("[HOOKS] SpawnDefaultPawnFor installed");
+
+    if (bGameSessions) {
+        LOGF("[PATCH] Applying GameSession patch");
+        PatchBytes<uint8_t>(Off::GameSessionPatch, 0x85);
+        LOGF("[PATCH] GameSession patch applied");
+    }
+
+    LOGF("[CORE] All hooks installed");
+
+    // ================================================================
+    // 3) NOW LISTEN
     // ================================================================
     LOGF("[CORE] Starting Listen");
 
