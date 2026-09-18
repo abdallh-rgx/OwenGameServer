@@ -44,11 +44,9 @@ add_custom_command(
     OUTPUT ${CURL_PATCHED_LIB}
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CURL_LIB} ${CURL_PATCHED_LIB}
-    COMMAND ${CMAKE_AR} d ${CURL_PATCHED_LIB} cf-h2-proxy.o
-    COMMAND ${CMAKE_AR} d ${CURL_PATCHED_LIB} http2.o
-    COMMAND ${CMAKE_AR} d ${CURL_PATCHED_LIB} http2-detect.o
+    COMMAND sh -c "${CMAKE_AR} t ${CURL_PATCHED_LIB} | grep -E 'h2|http2' | xargs -r -I{} ${CMAKE_AR} d ${CURL_PATCHED_LIB} {}"
     DEPENDS ${CURL_LIB}
-    COMMENT "Patching libcurl.a (removing HTTP2 objects)"
+    COMMENT "Patching libcurl.a (removing all HTTP2-related objects)"
 )
 
 add_custom_target(patch_curl ALL
