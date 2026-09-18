@@ -55,16 +55,17 @@ namespace {
         FStringLocal Portal;
     };
 
-    struct FNameRaw {
-        uint32_t ComparisonIndex;
-        uint32_t Number;
+    struct FName4 {
+        uint32_t Index;
     };
 
     struct FNetDriverDefLocal {
-        FNameRaw DefName;
-        FNameRaw DriverClassName;
+        FName4 DefName;
+        FName4 DriverClassName;
+        FName4 DriverClassNameFallback;
+        int32_t MaxChannelsOverride;
     };
-    static_assert(sizeof(FNetDriverDefLocal) == 16, "FNetDriverDef must be 16 bytes");
+    static_assert(sizeof(FNetDriverDefLocal) == 16, "FNetDriverDefinition must be 16 bytes");
 }
 
 int Misc::GetNetMode(void* world) {
@@ -193,87 +194,61 @@ bool Misc::Listen() {
         return false;
     }
 
-    FName driverName = MakeFName(L"GameNetDriver");
-    MLOG("[Listen] I FName=0x%x", driverName.ComparisonIndex);
-
-    if (driverName.ComparisonIndex == 0) {
-        MLOG("[Listen] FAIL: GameNetDriver name not found");
-        *pGIsClient = savedClient;
-        *pGIsServer = savedServer;
-        return false;
-    }
-
-    UClass* ipNetDriverClass = (UClass*)Utils::FindObject(L"/Script/OnlineSubsystemUtils.IpNetDriver");
-    MLOG("[Listen] J IpNetDriver class=%p", ipNetDriverClass);
-
-    if (!ipNetDriverClass) {
-        MLOG("[Listen] FAIL: IpNetDriver class not found");
-        *pGIsClient = savedClient;
-        *pGIsServer = savedServer;
-        return false;
-    }
-
     uint8_t* engBase = (uint8_t*)engine;
     FNetDriverDefLocal** pData = (FNetDriverDefLocal**)(engBase + 0xC40);
     int32_t* pNum = (int32_t*)(engBase + 0xC48);
     int32_t* pMax = (int32_t*)(engBase + 0xC4C);
 
-    MLOG("[Listen] J1 Before: Data=%p Num=%d Max=%d", *pData, *pNum, *pMax);
+    MLOG("[Listen] J NetDriverDefinitions: Data=%p Num=%d Max=%d", *pData, *pNum, *pMax);
 
-    MLOG("[Listen] J1b Existing entries:");
-    for (int i = 0; i < *pNum && i < 8; i++) {
-        FNetDriverDefLocal& d = (*pData)[i];
-        MLOG("[Listen]   entry[%d]: DefName=%08x DriverClass=%08x",
-             i, d.DefName.ComparisonIndex, d.DriverClassName.ComparisonIndex);
-    }
-
-    FName ipClassName = MakeFName(L"/Script/OnlineSubsystemUtils.IpNetDriver");
-    MLOG("[Listen] J2 FName IpNetDriver(fullpath)=0x%x", ipClassName.ComparisonIndex);
-
-    FNetDriverDefLocal* savedData = *pData;
-    int32_t savedNum = *pNum;
-    int32_t savedMax = *pMax;
-
-    FNetDriverDefLocal* localDefs = (FNetDriverDefLocal*)malloc(sizeof(FNetDriverDefLocal) * 4);
-    if (!localDefs) {
-        MLOG("[Listen] FAIL: malloc failed");
+    if (!*pData || *pNum <= 0) {
+        MLOG("[Listen] FAIL: NetDriverDefinitions empty");
         *pGIsClient = savedClient;
         *pGIsServer = savedServer;
         return false;
     }
 
-    memset(localDefs, 0, sizeof(FNetDriverDefLocal) * 4);
-    localDefs[0].DefName.ComparisonIndex = (uint32_t)driverName.ComparisonIndex;
-    localDefs[0].DefName.Number = 0;
-    localDefs[0].DriverClassName.ComparisonIndex = (uint32_t)ipClassName.ComparisonIndex;
-    localDefs[0].DriverClassName.Number = 0;
-
-    *pData = localDefs;
-    *pNum = 1;
-    *pMax = 4;
-
-    MLOG("[Listen] J3 Populated: Data=%p Num=%d Max=%d", *pData, *pNum, *pMax);
+    MLOG("[Listen] J1 Existing entries (proper layout):");
+    for (int i = 0; i < *pNum && i < 8; i++) {
+        FNetDriverDefLocal& e = (*pData)[i];
+        MLOG("[Listen]   [%d] DefName=0x%08x DriverClass=0x%08x Fallback=0x%08x MaxCh=%d",
+             i, e.DefName.Index, e.DriverClassName.Index,
+             e.DriverClassNameFallback.Index, e.MaxChannelsOverride);
+    }
 
     using CreateND_t = void* (*)(void*, void*, FName);
     CreateND_t createND = (CreateND_t)(Sarah::ImageBase + Off::CreateNetDriver);
-    MLOG("[Listen] J4 CreateNetDriver fn=%p", (void*)createND);
+    MLOG("[Listen] J2 CreateNetDriver fn=%p", (void*)createND);
 
-    void* netDriver = createND(engine, worldCtx, driverName);
-    MLOG("[Listen] K netDriver=%p", netDriver);
+    void* netDriver = nullptr;
+    int successEntry = -1;
 
-    *pData = savedData;
-    *pNum = savedNum;
-    *pMax = savedMax;
-    MLOG("[Listen] Restored engine->NetDriverDefinitions (Data=%p Num=%d Max=%d)",
-         *pData, *pNum, *pMax);
+    for (int i = 0; i < *pNum && i < 8; i++) {
+        FNetDriverDefLocal& e = (*pData)[i];
+
+        FName testName{};
+        testName.ComparisonIndex = e.DefName.Index;
+
+        MLOG("[Listen] try[%d] DefName=0x%x", i, e.DefName.Index);
+        void* nd = createND(engine, worldCtx, testName);
+        MLOG("[Listen]   -> %p", nd);
+
+        if (nd) {
+            netDriver = nd;
+            successEntry = i;
+            MLOG("[Listen] SUCCESS with entry[%d]", i);
+            break;
+        }
+    }
+
+    MLOG("[Listen] K netDriver=%p entry=%d", netDriver, successEntry);
 
     *pGIsClient = savedClient;
     *pGIsServer = savedServer;
     MLOG("[Listen] Restored GIsClient=%d GIsServer=%d", savedClient, savedServer);
 
     if (!netDriver) {
-        MLOG("[Listen] FAIL: CreateNetDriver returned null");
-        free(localDefs);
+        MLOG("[Listen] FAIL: no entry produced a NetDriver");
         return false;
     }
 
@@ -305,13 +280,6 @@ bool Misc::Listen() {
         MLOG("[Listen] === End scan ===");
     }
 
-    *(uint32_t*)((uint8_t*)netDriver + 0x208) = (uint32_t)driverName.ComparisonIndex;
-    *(uint32_t*)((uint8_t*)netDriver + 0x20C) = 0;
-    uint32_t readBackName = *(uint32_t*)((uint8_t*)netDriver + 0x208);
-    MLOG("[Listen] K2 NetDriverName write=0x%x readback=0x%x %s",
-         (uint32_t)driverName.ComparisonIndex, readBackName,
-         (readBackName == (uint32_t)driverName.ComparisonIndex) ? "OK" : "FAIL");
-
     FURLLocal url = {};
     url.Port = g_Port;
     url.Valid = 1;
@@ -325,22 +293,6 @@ bool Misc::Listen() {
 
     if (!listenOk) {
         MLOG("[Listen] FAIL: InitListen returned false");
-
-        {
-            uint8_t* base = (uint8_t*)netDriver;
-            uint64_t w = (uint64_t)world;
-            MLOG("[Listen] === Post-fail scan ===");
-            for (int off = 0x30; off < 0x800; off += 8) {
-                uint64_t val = 0;
-                memcpy(&val, base + off, 8);
-                if (val == w) {
-                    MLOG("[Listen]   candidate [%03x] = WORLD", off);
-                }
-            }
-            MLOG("[Listen] === End post-fail scan ===");
-        }
-
-        free(localDefs);
         return false;
     }
 
@@ -352,7 +304,6 @@ bool Misc::Listen() {
     MLOG("[Listen] L collections set");
 
     MLOG("[Listen] === Server listening on port %d ===", g_Port);
-    free(localDefs);
     return true;
 }
 
