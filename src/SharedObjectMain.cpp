@@ -421,24 +421,64 @@ static void MainThread() {
     LOGF("[CORE] All hooks installed");
 
     // ================================================================
-    // 1) MAP TRAVEL FIRST
+    // 1) MAP TRAVEL — استدعاء ProcessEvent مباشرة (بدون SDK wrapper)
     // ================================================================
     LOGF("[MAP] Starting map travel");
 
     UWorld* oldWorld = UWorld::GetWorld();
     LOGF("[MAP] oldWorld = %p", oldWorld);
 
-    UKismetSystemLibrary::ExecuteConsoleCommand(
-        oldWorld,
-        Utils::ToFString(
-            bCreative ? L"open Creative_NoApollo_Terrain" : L"open Artemis_Terrain"
-        ),
-        nullptr
-    );
+    {
+        static char16_t cmdBuf[512];
+        const wchar_t* cmd = bCreative
+            ? L"open Creative_NoApollo_Terrain"
+            : L"open Artemis_Terrain";
+
+        int len = 0;
+        for (const wchar_t* p = cmd; *p && len < 500; p++) {
+            cmdBuf[len++] = (char16_t)(*p);
+        }
+        cmdBuf[len] = 0;
+
+        LOGF("[MAP] cmd='%ls' len=%d", cmd, len);
+
+        struct FStringLocal {
+            char16_t* Data;
+            int32_t Num;
+            int32_t Max;
+        };
+
+        struct ExecCmdParams {
+            UObject* WorldContextObject;
+            FStringLocal Command;
+            APlayerController* SpecificPlayer;
+        };
+
+        UFunction* execFn = (UFunction*)Utils::FindObject(
+            L"/Script/Engine.KismetSystemLibrary.ExecuteConsoleCommand");
+        UClass* kslClass = (UClass*)Utils::FindObject(
+            L"/Script/Engine.KismetSystemLibrary");
+
+        LOGF("[MAP] execFn=%p kslClass=%p", execFn, kslClass);
+
+        if (execFn && kslClass && kslClass->ClassDefaultObject) {
+            ExecCmdParams parms = {};
+            parms.WorldContextObject = oldWorld;
+            parms.Command.Data = cmdBuf;
+            parms.Command.Num = len;
+            parms.Command.Max = len + 1;
+            parms.SpecificPlayer = nullptr;
+
+            LOGF("[MAP] Calling ProcessEvent...");
+            Sarah::CallProcessEvent(kslClass->ClassDefaultObject, execFn, &parms);
+            LOGF("[MAP] ExecuteConsoleCommand returned");
+        } else {
+            LOGF("[MAP] FAIL: cannot find ExecuteConsoleCommand");
+        }
+    }
 
     LOGF("[MAP] Map travel requested, waiting for new world...");
 
-    // انتظر العالم الجديد
     UWorld* newWorld = nullptr;
     for (int i = 0; i < 60; i++) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
