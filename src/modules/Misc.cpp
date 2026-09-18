@@ -54,6 +54,12 @@ namespace {
         FStringLocal Op;
         FStringLocal Portal;
     };
+
+    struct FNetDriverDefLocal {
+        FName DefName;
+        FName DriverClassName;
+    };
+    static_assert(sizeof(FNetDriverDefLocal) == 16, "FNetDriverDef must be 16 bytes");
 }
 
 int Misc::GetNetMode(void* world) {
@@ -202,26 +208,65 @@ bool Misc::Listen() {
         return false;
     }
 
-    using NewObj_t = void* (*)(void*, void*, FName, int, int, void*);
-    NewObj_t newObjectFn = (NewObj_t)(Sarah::ImageBase + 0x762cfb8);
-    MLOG("[Listen] J2 NewObject fn=%p", (void*)newObjectFn);
+    // ================================================================
+    // تعبئة engine->NetDriverDefinitions قبل استدعاء CreateNetDriver
+    // FNetDriverDefinition = { FName DefName; FName DriverClassName; } = 16 bytes
+    // engine + 0xC40 = Data
+    // engine + 0xC48 = Num
+    // engine + 0xC4C = Max
+    // ================================================================
+    uint8_t* engBase = (uint8_t*)engine;
+    FNetDriverDefLocal** pData = (FNetDriverDefLocal**)(engBase + 0xC40);
+    int32_t* pNum = (int32_t*)(engBase + 0xC48);
+    int32_t* pMax = (int32_t*)(engBase + 0xC4C);
 
-    void* netDriver = newObjectFn(
-        world,
-        ipNetDriverClass,
-        driverName,
-        0,
-        0,
-        nullptr
-    );
+    MLOG("[Listen] J1 Before: Data=%p Num=%d Max=%d", *pData, *pNum, *pMax);
+
+    FName ipClassName = MakeFName(L"IpNetDriver");
+    MLOG("[Listen] J2 FName IpNetDriver=0x%x", ipClassName.ComparisonIndex);
+
+    FNetDriverDefLocal* savedData = *pData;
+    int32_t savedNum = *pNum;
+    int32_t savedMax = *pMax;
+
+    FNetDriverDefLocal* localDefs = (FNetDriverDefLocal*)malloc(sizeof(FNetDriverDefLocal) * 4);
+    if (!localDefs) {
+        MLOG("[Listen] FAIL: malloc failed");
+        *pGIsClient = savedClient;
+        *pGIsServer = savedServer;
+        return false;
+    }
+
+    memset(localDefs, 0, sizeof(FNetDriverDefLocal) * 4);
+    localDefs[0].DefName = driverName;
+    localDefs[0].DriverClassName = ipClassName;
+
+    *pData = localDefs;
+    *pNum = 1;
+    *pMax = 4;
+
+    MLOG("[Listen] J3 Populated: Data=%p Num=%d Max=%d", *pData, *pNum, *pMax);
+
+    using CreateND_t = void* (*)(void*, void*, FName);
+    CreateND_t createND = (CreateND_t)(Sarah::ImageBase + Off::CreateNetDriver);
+    MLOG("[Listen] J4 CreateNetDriver fn=%p", (void*)createND);
+
+    void* netDriver = createND(engine, worldCtx, driverName);
     MLOG("[Listen] K netDriver=%p", netDriver);
+
+    *pData = savedData;
+    *pNum = savedNum;
+    *pMax = savedMax;
+    MLOG("[Listen] Restored engine->NetDriverDefinitions (Data=%p Num=%d Max=%d)",
+         *pData, *pNum, *pMax);
 
     *pGIsClient = savedClient;
     *pGIsServer = savedServer;
     MLOG("[Listen] Restored GIsClient=%d GIsServer=%d", savedClient, savedServer);
 
     if (!netDriver) {
-        MLOG("[Listen] FAIL: NewObject returned null");
+        MLOG("[Listen] FAIL: CreateNetDriver returned null");
+        free(localDefs);
         return false;
     }
 
@@ -287,6 +332,7 @@ bool Misc::Listen() {
             MLOG("[Listen] === End post-fail scan ===");
         }
 
+        free(localDefs);
         return false;
     }
 
@@ -298,6 +344,7 @@ bool Misc::Listen() {
     MLOG("[Listen] L collections set");
 
     MLOG("[Listen] === Server listening on port %d ===", g_Port);
+    free(localDefs);
     return true;
 }
 
