@@ -40,12 +40,23 @@ set_target_properties(dobby PROPERTIES
         "${CMAKE_SOURCE_DIR}/external/Dobby/include"
 )
 
+set(PATCH_SCRIPT "${CMAKE_BINARY_DIR}/patch_curl.sh")
+
+file(WRITE ${PATCH_SCRIPT}
+    "#!/bin/sh\n"
+    "set -e\n"
+    "cp -f \"${CURL_LIB}\" \"${CURL_PATCHED_LIB}\"\n"
+    "for obj in $(${CMAKE_AR} t \"${CURL_PATCHED_LIB}\" | grep -E 'h2|http2' || true); do\n"
+    "  ${CMAKE_AR} d \"${CURL_PATCHED_LIB}\" \"$obj\"\n"
+    "done\n"
+    "echo 'Patched libcurl.a'\n"
+)
+
 add_custom_command(
     OUTPUT ${CURL_PATCHED_LIB}
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        ${CURL_LIB} ${CURL_PATCHED_LIB}
-    COMMAND sh -c "${CMAKE_AR} t ${CURL_PATCHED_LIB} | grep -E 'h2|http2' | xargs -r -I{} ${CMAKE_AR} d ${CURL_PATCHED_LIB} {}"
-    DEPENDS ${CURL_LIB}
+    COMMAND chmod +x ${PATCH_SCRIPT}
+    COMMAND sh ${PATCH_SCRIPT}
+    DEPENDS ${CURL_LIB} ${PATCH_SCRIPT}
     COMMENT "Patching libcurl.a (removing all HTTP2-related objects)"
 )
 
