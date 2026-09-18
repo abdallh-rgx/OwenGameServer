@@ -1,428 +1,328 @@
 #include "pch.h"
+#include "Misc.hpp"
+#include "API.hpp"
+#include "options.h"
 #include "Utils.hpp"
 #include "UObject.hpp"
 #include "FName.hpp"
-#include "SDK/Engine_classes.hpp"
 
 #include <cstdlib>
+#include <cstdarg>
 #include <cstring>
-#include <map>
-#include <mutex>
-#include <atomic>
-#include <string>
-#include <vector>
 
-namespace Sarah {
+static FILE* g_miscLog = nullptr;
 
-std::atomic<uint32_t> GFastArrayIDCounter{1};
+static void MLOG(const char* fmt, ...) {
+    char buf[2048];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
 
-void* EngineRealloc(void* ptr, int64_t newLen, uint32_t alignment) {
-    if (newLen == 0) {
-        if (ptr) {
-            if (alignment > 16) {
-                void* original = *((void**)ptr - 1);
-                free(original);
-            } else {
-                free(ptr);
-            }
-        }
-        return nullptr;
-    }
+    __android_log_print(ANDROID_LOG_INFO, "OwenGameServer", "%s", buf);
 
-    if (alignment <= 16) {
-        return realloc(ptr, (size_t)newLen);
-    }
-
-    void* original = ptr ? *((void**)ptr - 1) : nullptr;
-
-    const size_t totalSize = (size_t)newLen + (size_t)alignment - 1 + sizeof(void*);
-    void* raw = realloc(original, totalSize);
-    if (!raw) return nullptr;
-
-    uintptr_t addr = ((uintptr_t)raw + sizeof(void*) + (uintptr_t)alignment - 1)
-                   & ~((uintptr_t)alignment - 1);
-
-    *((void**)addr - 1) = raw;
-    return (void*)addr;
-}
-
-namespace Enc {
-
-inline std::wstring UTF8ToW(const char* s, size_t len) {
-    std::wstring out;
-    out.reserve(len);
-    size_t i = 0;
-    while (i < len) {
-        unsigned char c = (unsigned char)s[i];
-        uint32_t cp = 0;
-        int extra = 0;
-        if (c < 0x80) { cp = c; extra = 0; }
-        else if ((c & 0xE0) == 0xC0) { cp = c & 0x1F; extra = 1; }
-        else if ((c & 0xF0) == 0xE0) { cp = c & 0x0F; extra = 2; }
-        else if ((c & 0xF8) == 0xF0) { cp = c & 0x07; extra = 3; }
-        else { i++; continue; }
-        i++;
-        for (int j = 0; j < extra && i < len; j++, i++)
-            cp = (cp << 6) | ((unsigned char)s[i] & 0x3F);
-        out.push_back((wchar_t)cp);
-    }
-    return out;
-}
-
-inline std::string WToUTF8(const std::wstring& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (wchar_t wc : s) {
-        uint32_t cp = (uint32_t)wc;
-        if (cp < 0x80) {
-            out.push_back((char)cp);
-        } else if (cp < 0x800) {
-            out.push_back((char)(0xC0 | (cp >> 6)));
-            out.push_back((char)(0x80 | (cp & 0x3F)));
-        } else if (cp < 0x10000) {
-            out.push_back((char)(0xE0 | (cp >> 12)));
-            out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
-            out.push_back((char)(0x80 | (cp & 0x3F)));
-        } else {
-            out.push_back((char)(0xF0 | (cp >> 18)));
-            out.push_back((char)(0x80 | ((cp >> 12) & 0x3F)));
-            out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
-            out.push_back((char)(0x80 | (cp & 0x3F)));
+    if (!g_miscLog) {
+        const char* paths[] = {
+            "/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+            "/sdcard/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+        };
+        for (auto p : paths) {
+            g_miscLog = fopen(p, "a");
+            if (g_miscLog) break;
         }
     }
-    return out;
+    if (g_miscLog) {
+        fprintf(g_miscLog, "%s\n", buf);
+        fflush(g_miscLog);
+    }
 }
 
-inline std::wstring UTF16ToW(const char16_t* s, size_t len) {
-    std::wstring out;
-    out.reserve(len);
-    for (size_t i = 0; i < len; i++) {
-        char16_t c = s[i];
-        if (c >= 0xD800 && c <= 0xDBFF && i + 1 < len) {
-            char16_t c2 = s[i + 1];
-            if (c2 >= 0xDC00 && c2 <= 0xDFFF) {
-                uint32_t cp = 0x10000u + (((uint32_t)(c - 0xD800) << 10) | (uint32_t)(c2 - 0xDC00));
-                out.push_back((wchar_t)cp);
-                i++;
-                continue;
-            }
-        }
-        out.push_back((wchar_t)c);
-    }
-    return out;
-}
-
-}
-
-}
-
-FName MakeFName(const wchar_t* name) {
-    if (!name || !name[0]) return FName{};
-
-    static std::mutex mtx;
-    static std::map<std::wstring, int32_t> cache;
-
-    std::wstring wname(name);
-
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        auto it = cache.find(wname);
-        if (it != cache.end()) return FName(it->second);
-    }
-
-    std::u16string u16;
-    for (wchar_t wc : wname) {
-        uint32_t cp = (uint32_t)wc;
-        if (cp <= 0xFFFF) {
-            u16.push_back((char16_t)cp);
-        } else {
-            cp -= 0x10000;
-            u16.push_back((char16_t)(0xD800 + (cp >> 10)));
-            u16.push_back((char16_t)(0xDC00 + (cp & 0x3FF)));
-        }
-    }
-    u16.push_back(u'\0');
-
-    UClass* stringLibClass = (UClass*)Utils::FindObject(L"/Script/Engine.KismetStringLibrary");
-    if (!stringLibClass) {
-        LOGE("[MakeFName] KismetStringLibrary class not found");
-        return FName(0);
-    }
-
-    UObject* stringLibCDO = stringLibClass->ClassDefaultObject;
-    if (!stringLibCDO) {
-        LOGE("[MakeFName] KismetStringLibrary CDO null");
-        return FName(0);
-    }
-
-    UFunction* convFn = (UFunction*)Utils::FindObject(L"/Script/Engine.KismetStringLibrary.Conv_StringToName");
-    if (!convFn) {
-        LOGE("[MakeFName] Conv_StringToName not found");
-        return FName(0);
-    }
-
-    struct {
+namespace {
+    struct FStringLocal {
         char16_t* Data;
         int32_t Num;
         int32_t Max;
-        int32_t RetIdx;
-        int32_t RetNum;
-    } parms = {};
-
-    parms.Data = (char16_t*)u16.data();
-    parms.Num = (int32_t)(u16.size() - 1);
-    parms.Max = (int32_t)u16.size();
-
-    if (!Sarah::ProcessEventPtr) {
-        Sarah::ProcessEventPtr = (ProcessEvent_t)(Sarah::ImageBase + Off::ProcessEvent);
-    }
-    if (!Sarah::ProcessEventPtr) {
-        LOGE("[MakeFName] ProcessEventPtr null");
-        return FName(0);
-    }
-
-    Sarah::ProcessEventPtr(stringLibCDO, convFn, &parms);
-
-    int32_t idx = parms.RetIdx;
-    LOGI("[MakeFName] '%ls' -> idx=%d", wname.c_str(), idx);
-
-    if (idx > 0) {
-        std::lock_guard<std::mutex> lock(mtx);
-        cache[wname] = idx;
-    }
-
-    return FName(idx);
-}
-
-uint32_t MakeFNameIndex(const wchar_t* name) {
-    FName n = MakeFName(name);
-    return (uint32_t)n.ComparisonIndex;
-}
-
-UObject* Utils::FindObject(const wchar_t* path, UClass* cls) {
-    return Sarah::UObjectManager::Find(path, cls);
-}
-
-UObject* Utils::LoadObject(const wchar_t* path, UClass* cls) {
-    return Sarah::UObjectManager::Load(path, cls);
-}
-
-UObject* Utils::FindOrLoad(const wchar_t* path, UClass* cls) {
-    return Sarah::UObjectManager::FindOrLoad(path, cls);
-}
-
-AActor* Utils::SpawnActor(UClass* cls, const FVector& loc, const FRotator& rot, AActor* owner) {
-    if (!cls) return nullptr;
-
-    struct FSpawnParams {
-        FName                    Name;
-        uint32_t                 _pad0;
-        AActor*                  Template;
-        AActor*                  Owner;
-        SDK::APawn*              Instigator;
-        void*                    OverrideLevel;
-        SDK::UActorComponent*    OverrideParentComponent;
-        uint8_t                  SpawnCollisionHandlingOverride;
-        uint8_t                  BitFlags;
-        uint8_t                  NameMode;
-        uint8_t                  _pad1;
-        uint32_t                 ObjectFlags;
     };
 
-    FSpawnParams params = {};
-    params.Owner = owner;
-    params.SpawnCollisionHandlingOverride = 1;
-    params.NameMode = 3;
-
-    CoreUObject::FTransform transform = MakeTransform(loc, rot);
-
-    using SpawnFn = AActor* (*)(UWorld*, UClass*, CoreUObject::FTransform*, FSpawnParams*);
-    static SpawnFn fn = nullptr;
-    if (!fn) fn = (SpawnFn)(Sarah::ImageBase + Off::UWorld_SpawnActor);
-
-    UWorld* world = UWorld::GetWorld();
-    if (!world) return nullptr;
-
-    return fn(world, cls, &transform, &params);
+    struct FURLLocal {
+        FStringLocal Protocol;
+        FStringLocal Host;
+        int32_t Port;
+        int32_t Valid;
+        FStringLocal Map;
+        FStringLocal RedirectURL;
+        FStringLocal Op;
+        FStringLocal Portal;
+    };
 }
 
-std::vector<AActor*> Utils::GetAllActors(UClass* cls) {
-    std::vector<AActor*> out;
-    if (!cls) return out;
-
-    UWorld* world = UWorld::GetWorld();
-    if (!world) return out;
-
-    TArray<AActor*> actors;
-    UGameplayStatics::GetAllActorsOfClass(world, cls, &actors);
-    for (int i = 0; i < actors.Num(); i++) out.push_back(actors[i]);
-    actors.Free();
-    return out;
+int Misc::GetNetMode(void* world) {
+    return 2;
 }
 
-float Utils::EvaluateScalableFloat(FScalableFloat& value) {
-    if (!value.Curve.CurveTable)
-        return value.Value;
+void Misc::TickFlush(void* driver, float dt) {
+    if (!driver) {
+        if (TickFlushOG) TickFlushOG(driver, dt);
+        return;
+    }
 
-    float out = 0.f;
-    FString ctx;
-    UDataTableFunctionLibrary::EvaluateCurveTableRow(
-        value.Curve.CurveTable, value.Curve.RowName, 0.f, nullptr, &out, ctx);
-    return out;
-}
+    if (!bDev) {
+        static bool hasAClientConnected = false;
+        void** clientConnections = *(void***)((uint8_t*)driver + 0x90);
+        int32_t numConnections = *(int32_t*)((uint8_t*)driver + 0x98);
 
-float Utils::EvaluateCurve(FCurveTableRowHandle& handle, float inTime) {
-    if (!handle.CurveTable)
-        return 0.f;
+        if (!hasAClientConnected && numConnections > 0 && clientConnections != nullptr) {
+            hasAClientConnected = true;
+            MLOG("[TickFlush] First client connected");
+        }
 
-    float out = 0.f;
-    FString ctx;
-    UDataTableFunctionLibrary::EvaluateCurveTableRow(
-        handle.CurveTable, handle.RowName, inTime, nullptr, &out, ctx);
-    return out;
-}
-
-void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj) {
-    out.ObjectIndex = 0;
-    out.ObjectSerialNumber = 0;
-
-    if (!obj || !Sarah::GObjectsLayout.Initialized) return;
-
-    int32_t index = *(int32_t*)((uint8_t*)obj + 0xC);
-    if (index < 0) return;
-
-    uint8_t* item = Sarah::GetItemByIndex(index);
-    if (!item) return;
-
-    if (*(void**)item != obj) return;
-
-    out.ObjectIndex = index;
-    out.ObjectSerialNumber = *(int32_t*)(item + 0x10) * 2;
-}
-
-FString Utils::ToFString(const std::wstring& s) {
-    std::u16string u16;
-    for (wchar_t wc : s) {
-        uint32_t cp = (uint32_t)wc;
-        if (cp <= 0xFFFF) {
-            u16.push_back((char16_t)cp);
-        } else {
-            cp -= 0x10000;
-            u16.push_back((char16_t)(0xD800 + (cp >> 10)));
-            u16.push_back((char16_t)(0xDC00 + (cp & 0x3FF)));
+        if (hasAClientConnected && numConnections == 0) {
+            MLOG("[TickFlush] All clients disconnected, staying alive (Listen mode)");
         }
     }
-    u16.push_back(u'\0');
 
-    FString result;
-    for (char16_t c : u16) result.Add(c);
-    return result;
-}
-
-std::wstring Utils::FromFString(const FString& s) {
-    if (!s) return L"";
-    int32 n = s.Num();
-    const char16_t* data = (const char16_t*)s.GetData();
-    if (!data) return L"";
-    std::u16string u16;
-    for (int32 i = 0; i < n; i++) {
-        if (data[i] == 0) break;
-        u16.push_back(data[i]);
-    }
-    return Sarah::Enc::UTF16ToW(u16.c_str(), u16.size());
-}
-
-bool Utils::TagContainerHasTag(const FGameplayTagContainer& container, const wchar_t* tagName) {
-    if (container.GameplayTags.Num() == 0) return false;
-    FName tag = MakeFName(tagName);
-    if (tag.ComparisonIndex == 0) return false;
-    for (int i = 0; i < container.GameplayTags.Num(); i++) {
-        if (container.GameplayTags[i].TagName == tag)
-            return true;
-    }
-    return false;
-}
-
-bool Utils::TagContainerHasAll(const FGameplayTagContainer& container, const FGameplayTagContainer& required) {
-    if (required.GameplayTags.Num() == 0) return true;
-    for (int i = 0; i < required.GameplayTags.Num(); i++) {
-        bool found = false;
-        for (int j = 0; j < container.GameplayTags.Num(); j++) {
-            if (container.GameplayTags[j].TagName == required.GameplayTags[i].TagName) {
-                found = true;
-                break;
+    if (!PlayersToDestroyLocked && PlayersToDestroy.size() > 0) {
+        for (size_t i = 0; i < PlayersToDestroy.size(); i++) {
+            if (PlayersToDestroy[i]) {
+                PlayersToDestroy[i]->K2_DestroyActor();
             }
         }
-        if (!found) return false;
+        PlayersToDestroy.clear();
     }
+
+    if (TickFlushOG) TickFlushOG(driver, dt);
+}
+
+bool Misc::StartAircraftPhase(AFortGameModeAthena* gameMode, char a2) {
+    bool ret = false;
+    if (StartAircraftPhaseOG)
+        ret = StartAircraftPhaseOG(gameMode, a2);
+
+    if (!gameMode) return ret;
+
+    if (!bDev && bGameSessions) {
+        API::GameServer(BackendUrl + "/solstice/api/v1/matchmaking/stop/by-address", IP, g_Port);
+    }
+
+    auto gameState = (AFortGameStateAthena*)gameMode->GameState;
+
+    if (bLateGame && gameState) {
+        gameState->GamePhase = EEAthenaGamePhase::SafeZones;
+        gameState->GamePhaseStep = EEAthenaGamePhaseStep::StormHolding;
+        gameState->OnRep_GamePhase(EEAthenaGamePhase::Aircraft);
+
+        if (gameState->Aircrafts.Num() > 0 && gameState->Aircrafts[0]) {
+            auto aircraft = gameState->Aircrafts[0];
+            aircraft->FlightInfo.FlightSpeed = 0.f;
+
+            FVector loc = gameMode->SafeZoneLocations.Num() > 3 ? gameMode->SafeZoneLocations[3] : FVector();
+            loc.Z = 17500.f;
+
+            {
+                FVector_NetQuantize100 flightStart{};
+                static_cast<FVector&>(flightStart) = loc;
+                aircraft->FlightInfo.FlightStartLocation = flightStart;
+            }
+            aircraft->FlightInfo.TimeTillFlightEnd = 7.f;
+            aircraft->FlightInfo.TimeTillDropEnd = 0.f;
+            aircraft->FlightInfo.TimeTillDropStart = 0.f;
+            aircraft->FlightStartTime = UGameplayStatics::GetTimeSeconds(UWorld::GetWorld());
+            aircraft->FlightEndTime = UGameplayStatics::GetTimeSeconds(UWorld::GetWorld()) + 7.f;
+        }
+
+        gameState->SafeZonesStartTime = UGameplayStatics::GetTimeSeconds(UWorld::GetWorld()) + 7.f;
+    }
+
+    return ret;
+}
+
+bool Misc::Listen() {
+    volatile uint8_t* pGIsClient = (volatile uint8_t*)(Sarah::ImageBase + Off::GIsClient);
+    volatile uint8_t* pGIsServer = (volatile uint8_t*)(Sarah::ImageBase + Off::GIsServer);
+
+    uint8_t savedClient = *pGIsClient;
+    uint8_t savedServer = *pGIsServer;
+
+    MLOG("[Listen] === Starting Listen ===");
+    MLOG("[Listen] Saved GIsClient=%d GIsServer=%d", savedClient, savedServer);
+
+    *pGIsClient = 0;
+    *pGIsServer = 1;
+    MLOG("[Listen] Temp set Dedicated (Client=0, Server=1)");
+
+    UWorld* world = *(UWorld**)(Sarah::ImageBase + Off::GWorld);
+    MLOG("[Listen] B world=%p", world);
+
+    UEngine* engine = *(UEngine**)(Sarah::ImageBase + Off::GEngine);
+    MLOG("[Listen] D engine=%p", engine);
+
+    if (!world || !engine) {
+        MLOG("[Listen] FAIL: world or engine null");
+        *pGIsClient = savedClient;
+        *pGIsServer = savedServer;
+        return false;
+    }
+
+    if (!world->PersistentLevel) {
+        MLOG("[Listen] FAIL: PersistentLevel is null");
+        *pGIsClient = savedClient;
+        *pGIsServer = savedServer;
+        return false;
+    }
+
+    using GetWorldCtx_t = void* (*)(void*, void*);
+    GetWorldCtx_t getWorldCtx = (GetWorldCtx_t)(Sarah::ImageBase + Off::GetWorldContext);
+    void* worldCtx = getWorldCtx(engine, world);
+    MLOG("[Listen] H worldCtx=%p", worldCtx);
+
+    if (!worldCtx) {
+        MLOG("[Listen] FAIL: worldCtx null");
+        *pGIsClient = savedClient;
+        *pGIsServer = savedServer;
+        return false;
+    }
+
+    FName driverName = MakeFName(L"GameNetDriver");
+    MLOG("[Listen] I FName=0x%x", driverName.ComparisonIndex);
+
+    if (driverName.ComparisonIndex == 0) {
+        MLOG("[Listen] FAIL: GameNetDriver name not found");
+        *pGIsClient = savedClient;
+        *pGIsServer = savedServer;
+        return false;
+    }
+
+    UClass* ipNetDriverClass = (UClass*)Utils::FindObject(L"/Script/OnlineSubsystemUtils.IpNetDriver");
+    MLOG("[Listen] J IpNetDriver class=%p", ipNetDriverClass);
+
+    if (!ipNetDriverClass) {
+        MLOG("[Listen] FAIL: IpNetDriver class not found");
+        *pGIsClient = savedClient;
+        *pGIsServer = savedServer;
+        return false;
+    }
+
+    void* netDriver = UGameplayStatics::SpawnObject(ipNetDriverClass, world);
+    MLOG("[Listen] K netDriver=%p  world=%p  engine=%p  worldCtx=%p",
+         netDriver, world, engine, worldCtx);
+
+    *pGIsClient = savedClient;
+    *pGIsServer = savedServer;
+    MLOG("[Listen] Restored GIsClient=%d GIsServer=%d", savedClient, savedServer);
+
+    if (!netDriver) {
+        MLOG("[Listen] FAIL: SpawnObject returned null");
+        return false;
+    }
+
+    // ================================================================
+    // ✅ فحص الذاكرة: ابحث عن world / engine / worldCtx داخل netDriver
+    // ================================================================
+    {
+        uint8_t* base = (uint8_t*)netDriver;
+        uint64_t w = (uint64_t)world;
+        uint64_t e = (uint64_t)engine;
+        uint64_t c = (uint64_t)worldCtx;
+
+        MLOG("[Listen] === Scanning netDriver memory (0x30..0x800) ===");
+
+        for (int off = 0x30; off < 0x800; off += 8) {
+            uint64_t val = 0;
+            memcpy(&val, base + off, 8);
+
+            if (val < 0x1000 || val > 0x7FFFFFFFFFFFULL) continue;
+
+            const char* label = nullptr;
+            if (val == w)      label = "★ WORLD";
+            else if (val == e) label = "★ ENGINE";
+            else if (val == c) label = "★ WORLDCTX";
+
+            if (label) {
+                MLOG("[Listen]   [%03x] = 0x%016llx  %s",
+                     off, (unsigned long long)val, label);
+            }
+        }
+
+        MLOG("[Listen] === End scan ===");
+    }
+
+    // اكتب NetDriverName في 0x208 (مؤكد من تحليل IDA)
+    *(FName*)((uint8_t*)netDriver + 0x208) = driverName;
+    uint32_t readBackName = *(uint32_t*)((uint8_t*)netDriver + 0x208);
+    MLOG("[Listen] K2 NetDriverName write=0x%x readback=0x%x %s",
+         (uint32_t)driverName.ComparisonIndex, readBackName,
+         (readBackName == (uint32_t)driverName.ComparisonIndex) ? "OK" : "FAIL");
+
+    // ================================================================
+    // InitListen
+    // ================================================================
+    FURLLocal url = {};
+    url.Port = g_Port;
+    url.Valid = 1;
+
+    using InitListen_t = bool (*)(void*, void*, FURLLocal*, bool, FStringLocal*);
+    InitListen_t initListen = (InitListen_t)(Sarah::ImageBase + Off::InitListen);
+    MLOG("[Listen] M calling InitListen on port %d...", g_Port);
+
+    bool listenOk = initListen(netDriver, world, &url, false, nullptr);
+    MLOG("[Listen] N InitListen returned %d", (int)listenOk);
+
+    if (!listenOk) {
+        MLOG("[Listen] FAIL: InitListen returned false");
+
+        // فحص بعدي: أي world candidates موجودة؟
+        {
+            uint8_t* base = (uint8_t*)netDriver;
+            uint64_t w = (uint64_t)world;
+            MLOG("[Listen] === Post-fail scan ===");
+            for (int off = 0x30; off < 0x800; off += 8) {
+                uint64_t val = 0;
+                memcpy(&val, base + off, 8);
+                if (val == w) {
+                    MLOG("[Listen]   candidate [%03x] = WORLD", off);
+                }
+            }
+            MLOG("[Listen] === End post-fail scan ===");
+        }
+
+        return false;
+    }
+
+    world->NetDriver = (UNetDriver*)netDriver;
+
+    for (auto& collection : world->LevelCollections) {
+        collection.NetDriver = (UNetDriver*)netDriver;
+    }
+    MLOG("[Listen] L collections set");
+
+    // تحقق نهائي
+    MLOG("[Listen] === Server listening on port %d ===", g_Port);
     return true;
 }
 
-void Utils::MarkItemDirty(FFastArraySerializer& serializer, FFastArraySerializerItem& item) {
-    int32_t& arrayKey = *(int32_t*)((uint8_t*)&serializer + 0x54);
-    arrayKey++;
-    if (item.ReplicationID == -1) {
-        item.ReplicationID = Sarah::GFastArrayIDCounter.fetch_add(1);
-    }
-    item.ReplicationKey = Sarah::GFastArrayIDCounter.fetch_add(1);
-    item.MostRecentArrayReplicationKey = arrayKey;
+void Misc::SetDynamicFoundationEnabled(UObject* context, Params::ABuildingFoundation_SetDynamicFoundationEnabled* params) {
+    auto foundation = (ABuildingFoundation*)context;
+    if (!foundation) return;
+
+    foundation->DynamicFoundationRepData.EnabledState = params->bEnabled
+        ? EEDynamicFoundationEnabledState::Enabled
+        : EEDynamicFoundationEnabledState::Disabled;
+    foundation->OnRep_DynamicFoundationRepData();
+    foundation->FoundationEnabledState = params->bEnabled
+        ? EEDynamicFoundationEnabledState::Enabled
+        : EEDynamicFoundationEnabledState::Disabled;
 }
 
-void Utils::MarkArrayDirty(FFastArraySerializer& serializer) {
-    int32_t& arrayKey = *(int32_t*)((uint8_t*)&serializer + 0x54);
-    arrayKey++;
+void Misc::SetDynamicFoundationTransform(UObject* context, Params::ABuildingFoundation_SetDynamicFoundationTransform* params) {
+    auto foundation = (ABuildingFoundation*)context;
+    if (!foundation) return;
+
+    foundation->DynamicFoundationTransform = params->NewTransform;
+    foundation->DynamicFoundationRepData.Rotation = QuatToRotator(params->NewTransform.Rotation);
+    foundation->DynamicFoundationRepData.Translation = params->NewTransform.Translation;
+    foundation->StreamingData.FoundationLocation = params->NewTransform.Translation;
+    foundation->OnRep_DynamicFoundationRepData();
 }
 
-namespace SDK {
-
-UObject* FWeakObjectPtr::Get() const {
-    if (ObjectSerialNumber == 0 || ObjectIndex < 0)
-        return nullptr;
-
-    uint8_t* item = Sarah::GetItemByIndex(ObjectIndex);
-    if (!item) return nullptr;
-
-    UObject* obj = *(UObject**)item;
-    if (!obj) return nullptr;
-
-    int32_t serial = *(int32_t*)(item + 0x10) * 2;
-    if (serial != ObjectSerialNumber) return nullptr;
-
-    return obj;
-}
-
-bool FWeakObjectPtr::IsValid() const {
-    return Get() != nullptr;
-}
-
-bool FWeakObjectPtr::operator==(const FWeakObjectPtr& Other) const {
-    return ObjectIndex == Other.ObjectIndex
-        && ObjectSerialNumber == Other.ObjectSerialNumber;
-}
-
-bool FWeakObjectPtr::operator!=(const FWeakObjectPtr& Other) const {
-    return !(*this == Other);
-}
-
-bool FWeakObjectPtr::operator==(const class UObject* Other) const {
-    return Get() == Other;
-}
-
-bool FWeakObjectPtr::operator!=(const class UObject* Other) const {
-    return Get() != Other;
-}
-
-}
-
-namespace UC {
-
-void* ContainerRealloc(void* ptr, int64 newLen, uint32 alignment) {
-    (void)alignment;
-    return std::realloc(ptr, (size_t)newLen);
-}
-
-void ContainerFree(void* ptr) {
-    (void)ptr;
-}
-
+void Misc::Hook() {
 }
