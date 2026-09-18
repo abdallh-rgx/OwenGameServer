@@ -8,6 +8,7 @@
 
 #include <cstdlib>
 #include <cstdarg>
+#include <cstring>
 
 static FILE* g_miscLog = nullptr;
 
@@ -191,29 +192,62 @@ bool Misc::Listen() {
         return false;
     }
 
-    using CreateND_t = void* (*)(void*, void*, FName);
-    CreateND_t createND = (CreateND_t)(Sarah::ImageBase + Off::CreateNetDriver);
-    MLOG("[Listen] J CreateNetDriver fn=%p", (void*)createND);
+    UClass* ipNetDriverClass = (UClass*)Utils::FindObject(L"/Script/OnlineSubsystemUtils.IpNetDriver");
+    MLOG("[Listen] J IpNetDriver class=%p", ipNetDriverClass);
 
-    void* netDriver = createND(engine, worldCtx, driverName);
-    MLOG("[Listen] K netDriver=%p", netDriver);
+    if (!ipNetDriverClass) {
+        MLOG("[Listen] FAIL: IpNetDriver class not found");
+        *pGIsClient = savedClient;
+        *pGIsServer = savedServer;
+        return false;
+    }
+
+    void* netDriver = UGameplayStatics::SpawnObject(ipNetDriverClass, world);
+    MLOG("[Listen] K netDriver=%p  world=%p  engine=%p  worldCtx=%p",
+         netDriver, world, engine, worldCtx);
 
     *pGIsClient = savedClient;
     *pGIsServer = savedServer;
     MLOG("[Listen] Restored GIsClient=%d GIsServer=%d", savedClient, savedServer);
 
     if (!netDriver) {
-        MLOG("[Listen] FAIL: CreateNetDriver returned null");
+        MLOG("[Listen] FAIL: SpawnObject returned null");
         return false;
     }
 
-    *(FName*)((uint8_t*)netDriver + 0x190) = driverName;
-    *(void**)((uint8_t*)netDriver + 0x140) = world;
+    {
+        uint8_t* base = (uint8_t*)netDriver;
+        uint64_t w = (uint64_t)world;
+        uint64_t e = (uint64_t)engine;
+        uint64_t c = (uint64_t)worldCtx;
 
-    for (auto& collection : world->LevelCollections) {
-        collection.NetDriver = (UNetDriver*)netDriver;
+        MLOG("[Listen] === Scanning netDriver memory (0x30..0x800) ===");
+
+        for (int off = 0x30; off < 0x800; off += 8) {
+            uint64_t val = 0;
+            memcpy(&val, base + off, 8);
+
+            if (val < 0x1000 || val > 0x7FFFFFFFFFFFULL) continue;
+
+            const char* label = nullptr;
+            if (val == w)      label = "WORLD";
+            else if (val == e) label = "ENGINE";
+            else if (val == c) label = "WORLDCTX";
+
+            if (label) {
+                MLOG("[Listen]   [%03x] = 0x%016llx  * %s",
+                     off, (unsigned long long)val, label);
+            }
+        }
+
+        MLOG("[Listen] === End scan ===");
     }
-    MLOG("[Listen] L collections set");
+
+    *(FName*)((uint8_t*)netDriver + 0x208) = driverName;
+    uint32_t readBackName = *(uint32_t*)((uint8_t*)netDriver + 0x208);
+    MLOG("[Listen] K2 NetDriverName write=0x%x readback=0x%x %s",
+         (uint32_t)driverName.ComparisonIndex, readBackName,
+         (readBackName == (uint32_t)driverName.ComparisonIndex) ? "OK" : "FAIL");
 
     FURLLocal url = {};
     url.Port = g_Port;
@@ -221,17 +255,37 @@ bool Misc::Listen() {
 
     using InitListen_t = bool (*)(void*, void*, FURLLocal*, bool, FStringLocal*);
     InitListen_t initListen = (InitListen_t)(Sarah::ImageBase + Off::InitListen);
-    MLOG("[Listen] M InitListen fn=%p, port=%d", (void*)initListen, g_Port);
+    MLOG("[Listen] M calling InitListen on port %d...", g_Port);
 
     bool listenOk = initListen(netDriver, world, &url, false, nullptr);
     MLOG("[Listen] N InitListen returned %d", (int)listenOk);
 
     if (!listenOk) {
         MLOG("[Listen] FAIL: InitListen returned false");
+
+        {
+            uint8_t* base = (uint8_t*)netDriver;
+            uint64_t w = (uint64_t)world;
+            MLOG("[Listen] === Post-fail scan ===");
+            for (int off = 0x30; off < 0x800; off += 8) {
+                uint64_t val = 0;
+                memcpy(&val, base + off, 8);
+                if (val == w) {
+                    MLOG("[Listen]   candidate [%03x] = WORLD", off);
+                }
+            }
+            MLOG("[Listen] === End post-fail scan ===");
+        }
+
         return false;
     }
 
     world->NetDriver = (UNetDriver*)netDriver;
+
+    for (auto& collection : world->LevelCollections) {
+        collection.NetDriver = (UNetDriver*)netDriver;
+    }
+    MLOG("[Listen] L collections set");
 
     MLOG("[Listen] === Server listening on port %d ===", g_Port);
     return true;
