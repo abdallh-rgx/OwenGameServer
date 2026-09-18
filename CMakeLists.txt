@@ -17,16 +17,8 @@ set(CURL_LIB
     ${CMAKE_SOURCE_DIR}/external/curl/libs/${ANDROID_ABI}/libcurl.a
 )
 
-set(NGHTTP2_LIB
-    ${CMAKE_SOURCE_DIR}/external/curl/libs/${ANDROID_ABI}/libnghttp2.a
-)
-
-set(SSL_LIB
-    ${CMAKE_SOURCE_DIR}/external/curl/libs/${ANDROID_ABI}/libssl.a
-)
-
-set(CRYPTO_LIB
-    ${CMAKE_SOURCE_DIR}/external/curl/libs/${ANDROID_ABI}/libcrypto.a
+set(CURL_PATCHED_LIB
+    ${CMAKE_BINARY_DIR}/libcurl_patched.a
 )
 
 if(NOT EXISTS "${DOBBY_LIB}")
@@ -38,30 +30,26 @@ if(NOT EXISTS "${CURL_LIB}")
 endif()
 
 add_library(dobby STATIC IMPORTED)
-
 set_target_properties(dobby PROPERTIES
     IMPORTED_LOCATION "${DOBBY_LIB}"
     INTERFACE_INCLUDE_DIRECTORIES
         "${CMAKE_SOURCE_DIR}/external/Dobby/include"
 )
 
-add_library(curl STATIC IMPORTED)
-
-set_target_properties(curl PROPERTIES
-    IMPORTED_LOCATION "${CURL_LIB}"
-    INTERFACE_INCLUDE_DIRECTORIES
-        "${CMAKE_SOURCE_DIR}/external/curl/include"
+add_custom_command(
+    OUTPUT ${CURL_PATCHED_LIB}
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CURL_LIB} ${CURL_PATCHED_LIB}
+    COMMAND llvm-ar d ${CURL_PATCHED_LIB} cf-h2-proxy.o
+    COMMAND llvm-ar d ${CURL_PATCHED_LIB} http2.o
+    COMMAND llvm-ar d ${CURL_PATCHED_LIB} http2-detect.o
+    DEPENDS ${CURL_LIB}
+    COMMENT "Patching libcurl.a (removing HTTP2 objects)"
 )
 
-if(EXISTS "${NGHTTP2_LIB}")
-    add_library(nghttp2 STATIC IMPORTED)
-    set_target_properties(nghttp2 PROPERTIES
-        IMPORTED_LOCATION "${NGHTTP2_LIB}"
-    )
-    message(STATUS "nghttp2: found at ${NGHTTP2_LIB}")
-else()
-    message(STATUS "nghttp2: NOT found — will use unresolved-symbols=ignore-all")
-endif()
+add_custom_target(patch_curl ALL
+    DEPENDS ${CURL_PATCHED_LIB}
+)
 
 file(GLOB_RECURSE OWEN_SOURCES
     CONFIGURE_DEPENDS
@@ -81,6 +69,8 @@ add_library(gameserver SHARED
     ${OWEN_SOURCES}
     ${SDK_SOURCES}
 )
+
+add_dependencies(gameserver patch_curl)
 
 target_include_directories(gameserver PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
@@ -111,30 +101,16 @@ target_link_options(gameserver PRIVATE
     -Wl,--as-needed
     -Wl,-z,relro
     -Wl,-z,lazy
-    -Wl,--unresolved-symbols=ignore-all
-    -Wl,--allow-shlib-undefined
 )
 
 target_link_libraries(gameserver
     dobby
-    curl
+    ${CURL_PATCHED_LIB}
     log
     android
     z
     dl
 )
-
-if(EXISTS "${NGHTTP2_LIB}")
-    target_link_libraries(gameserver nghttp2)
-endif()
-
-if(EXISTS "${SSL_LIB}")
-    target_link_libraries(gameserver ${SSL_LIB})
-endif()
-
-if(EXISTS "${CRYPTO_LIB}")
-    target_link_libraries(gameserver ${CRYPTO_LIB})
-endif()
 
 find_program(LLVM_OBJCOPY
     NAMES
@@ -166,6 +142,5 @@ message(STATUS "Build: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Optimization: O2")
 message(STATUS "GC Sections: enabled")
 message(STATUS "As-needed: enabled")
-message(STATUS "Unresolved symbols: ignore-all")
-message(STATUS "Debug sections: removed")
+message(STATUS "curl: patched (no HTTP2 objects)")
 message(STATUS "================================")
