@@ -24,8 +24,8 @@ static void MLOG(const char* fmt, ...) {
 
     if (!g_miscLog) {
         const char* paths[] = {
-            "/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
-            "/sdcard/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+            "/storage/emulated/0/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
+            "/sdcard/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
         };
         for (auto p : paths) {
             g_miscLog = fopen(p, "a");
@@ -70,7 +70,7 @@ namespace {
 }
 
 int Misc::GetNetMode(void* world) {
-    return 2;
+    return 1;
 }
 
 void Misc::TickFlush(void* driver, float dt) {
@@ -90,7 +90,7 @@ void Misc::TickFlush(void* driver, float dt) {
         }
 
         if (hasAClientConnected && numConnections == 0) {
-            MLOG("[TickFlush] All clients disconnected, staying alive (Listen mode)");
+            MLOG("[TickFlush] All clients disconnected, staying alive");
         }
     }
 
@@ -150,18 +150,9 @@ bool Misc::StartAircraftPhase(AFortGameModeAthena* gameMode, char a2) {
 }
 
 bool Misc::Listen() {
-    volatile uint8_t* pGIsClient = (volatile uint8_t*)(Sarah::ImageBase + Off::GIsClient);
-    volatile uint8_t* pGIsServer = (volatile uint8_t*)(Sarah::ImageBase + Off::GIsServer);
-
-    uint8_t savedClient = *pGIsClient;
-    uint8_t savedServer = *pGIsServer;
-
     MLOG("[Listen] === Starting Listen ===");
-    MLOG("[Listen] Saved GIsClient=%d GIsServer=%d", savedClient, savedServer);
-
-    *pGIsClient = 0;
-    *pGIsServer = 1;
-    MLOG("[Listen] Temp set Dedicated (Client=0, Server=1)");
+    MLOG("[Listen] GIsClient=%d GIsServer=%d (already dedicated)",
+         GetGIsClient(), GetGIsServer());
 
     UWorld* world = *(UWorld**)(Sarah::ImageBase + Off::GWorld);
     MLOG("[Listen] B world=%p", world);
@@ -171,15 +162,11 @@ bool Misc::Listen() {
 
     if (!world || !engine) {
         MLOG("[Listen] FAIL: world or engine null");
-        *pGIsClient = savedClient;
-        *pGIsServer = savedServer;
         return false;
     }
 
     if (!world->PersistentLevel) {
         MLOG("[Listen] FAIL: PersistentLevel is null");
-        *pGIsClient = savedClient;
-        *pGIsServer = savedServer;
         return false;
     }
 
@@ -190,8 +177,6 @@ bool Misc::Listen() {
 
     if (!worldCtx) {
         MLOG("[Listen] FAIL: worldCtx null");
-        *pGIsClient = savedClient;
-        *pGIsServer = savedServer;
         return false;
     }
 
@@ -204,12 +189,10 @@ bool Misc::Listen() {
 
     if (!*pData || *pNum <= 0) {
         MLOG("[Listen] FAIL: NetDriverDefinitions empty");
-        *pGIsClient = savedClient;
-        *pGIsServer = savedServer;
         return false;
     }
 
-    MLOG("[Listen] J1 Existing entries (proper layout):");
+    MLOG("[Listen] J1 Existing entries:");
     for (int i = 0; i < *pNum && i < 8; i++) {
         FNetDriverDefLocal& e = (*pData)[i];
         MLOG("[Listen]   [%d] DefName=0x%08x DriverClass=0x%08x Fallback=0x%08x MaxCh=%d",
@@ -243,10 +226,6 @@ bool Misc::Listen() {
     }
 
     MLOG("[Listen] K netDriver=%p entry=%d", netDriver, successEntry);
-
-    *pGIsClient = savedClient;
-    *pGIsServer = savedServer;
-    MLOG("[Listen] Restored GIsClient=%d GIsServer=%d", savedClient, savedServer);
 
     if (!netDriver) {
         MLOG("[Listen] FAIL: no entry produced a NetDriver");
