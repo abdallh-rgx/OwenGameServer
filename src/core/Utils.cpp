@@ -310,10 +310,17 @@ FString Utils::ToFString(const std::wstring& s) {
     }
     buf[n] = 0;
 
+    struct FStringRaw {
+        char16_t* Data;
+        int32_t Num;
+        int32_t Max;
+    };
+
     FString result;
-    result.Data = (wchar_t*)buf;
-    result.NumElements = n;
-    result.MaxElements = n + 1;
+    FStringRaw* raw = (FStringRaw*)&result;
+    raw->Data = buf;
+    raw->Num = n;
+    raw->Max = n + 1;
     return result;
 }
 
