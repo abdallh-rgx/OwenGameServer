@@ -301,21 +301,19 @@ void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj) {
 }
 
 FString Utils::ToFString(const std::wstring& s) {
-    std::u16string u16;
-    for (wchar_t wc : s) {
-        uint32_t cp = (uint32_t)wc;
-        if (cp <= 0xFFFF) {
-            u16.push_back((char16_t)cp);
-        } else {
-            cp -= 0x10000;
-            u16.push_back((char16_t)(0xD800 + (cp >> 10)));
-            u16.push_back((char16_t)(0xDC00 + (cp & 0x3FF)));
-        }
+    static char16_t buf[1024];
+    int n = (int)s.size();
+    if (n > 1020) n = 1020;
+
+    for (int i = 0; i < n; i++) {
+        buf[i] = (char16_t)s[i];
     }
-    u16.push_back(u'\0');
+    buf[n] = 0;
 
     FString result;
-    for (char16_t c : u16) result.Add(c);
+    result.Data = (wchar_t*)buf;
+    result.NumElements = n;
+    result.MaxElements = n + 1;
     return result;
 }
 
