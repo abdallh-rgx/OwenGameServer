@@ -10,6 +10,8 @@ int Curl_http2_setup(void*, void*) { return 0; }
 int Curl_http2_setup_req(void*) { return 0; }
 int Curl_http2_done(void*, bool) { return 0; }
 int Curl_http2_verfify(void*, void*) { return 0; }
+int Curl_h2_http_1_1_error(void*, int) { return 0; }
+int Curl_h2_headers_to_string(void*, void*) { return 0; }
 
 void* nghttp2_session_callbacks_new(void) { return 0; }
 void  nghttp2_session_callbacks_del(void*) { }
@@ -24,6 +26,10 @@ void  nghttp2_session_callbacks_set_error_callback2(void*, void*) { }
 void  nghttp2_session_callbacks_set_on_extension_chunk_recv_callback(void*, void*) { }
 void  nghttp2_session_callbacks_set_unpack_extension_callback(void*, void*) { }
 void  nghttp2_session_callbacks_set_pack_extension_callback(void*, void*) { }
+void  nghttp2_session_callbacks_set_on_frame_send_callback(void*, void*) { }
+void  nghttp2_session_callbacks_set_on_invalid_header_callback(void*, void*) { }
+void  nghttp2_session_callbacks_set_select_padding_callback(void*, void*) { }
+void  nghttp2_session_callbacks_set_data_source_read_length_callback(void*, void*) { }
 
 void* nghttp2_option_new(void) { return 0; }
 void  nghttp2_option_del(void*) { }
@@ -60,18 +66,11 @@ void* nghttp2_session_get_stream_user_data(void*, int) { return 0; }
 void* nghttp2_session_get_stream(void*, int) { return 0; }
 int   nghttp2_session_check_server_session(void*) { return 0; }
 int   nghttp2_session_get_hd_deflate_dynamic_table_size(void*) { return 0; }
+void* nghttp2_session_get_outbound_queue_size(void*) { return 0; }
 
 const char* nghttp2_strerror(int) { return "nghttp2-disabled"; }
 const char* nghttp2_http2_strerror(int) { return "nghttp2-disabled"; }
 const char* nghttp2_version(int) { return "0.0.0"; }
-
-void* nghttp2_session_callbacks_new_wrap(void) { return 0; }
-void* nghttp2_session_get_outbound_queue_size(void*) { return 0; }
-
-void  nghttp2_session_callbacks_set_on_frame_send_callback(void*, void*) { }
-void  nghttp2_session_callbacks_set_on_invalid_header_callback(void*, void*) { }
-void  nghttp2_session_callbacks_set_select_padding_callback(void*, void*) { }
-void  nghttp2_session_callbacks_set_data_source_read_length_callback(void*, void*) { }
 
 int BrotliDecoderGetErrorCode(void*) { return 0; }
 int BrotliDecoderDecompressStream(void*, void*, void*, void*, void*, void*) { return 0; }
