@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstdarg>
 #include <cstring>
+#include <string>
 
 static FILE* g_miscLog = nullptr;
 
@@ -296,16 +297,23 @@ bool Misc::Listen() {
 
     MLOG("[Listen] URL: host='0.0.0.0' port=%d", url.Port);
 
+    static char16_t errBuf[512] = {};
+    FStringLocal errStr = {};
+    errStr.Data = errBuf;
+    errStr.Num = 0;
+    errStr.Max = 512;
+
     using InitListen_t = bool (*)(void*, void*, FURLLocal*, bool, FStringLocal*);
     InitListen_t initListen = (InitListen_t)(Sarah::ImageBase + Off::InitListen);
     MLOG("[Listen] InitListen fn=%p", (void*)initListen);
 
-    MLOG("[Listen] M about to call InitListen...");
-    bool listenOk = initListen(netDriver, world, &url, false, nullptr);
+    MLOG("[Listen] M about to call InitListen(worldCtx=%p, &err)...", worldCtx);
+
+    bool listenOk = initListen(netDriver, worldCtx, &url, false, &errStr);
     MLOG("[Listen] N InitListen returned %d", (int)listenOk);
 
     if (!listenOk) {
-        MLOG("[Listen] FAIL: InitListen returned false");
+        MLOG("[Listen] FAIL: InitListen returned false, errLen=%d", errStr.Num);
         return false;
     }
 
