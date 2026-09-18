@@ -17,6 +17,18 @@ set(CURL_LIB
     ${CMAKE_SOURCE_DIR}/external/curl/libs/${ANDROID_ABI}/libcurl.a
 )
 
+set(NGHTTP2_LIB
+    ${CMAKE_SOURCE_DIR}/external/curl/libs/${ANDROID_ABI}/libnghttp2.a
+)
+
+set(SSL_LIB
+    ${CMAKE_SOURCE_DIR}/external/curl/libs/${ANDROID_ABI}/libssl.a
+)
+
+set(CRYPTO_LIB
+    ${CMAKE_SOURCE_DIR}/external/curl/libs/${ANDROID_ABI}/libcrypto.a
+)
+
 if(NOT EXISTS "${DOBBY_LIB}")
     message(FATAL_ERROR "Dobby library not found: ${DOBBY_LIB}")
 endif()
@@ -40,6 +52,16 @@ set_target_properties(curl PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES
         "${CMAKE_SOURCE_DIR}/external/curl/include"
 )
+
+if(EXISTS "${NGHTTP2_LIB}")
+    add_library(nghttp2 STATIC IMPORTED)
+    set_target_properties(nghttp2 PROPERTIES
+        IMPORTED_LOCATION "${NGHTTP2_LIB}"
+    )
+    message(STATUS "nghttp2: found at ${NGHTTP2_LIB}")
+else()
+    message(STATUS "nghttp2: NOT found — will use unresolved-symbols=ignore-all")
+endif()
 
 file(GLOB_RECURSE OWEN_SOURCES
     CONFIGURE_DEPENDS
@@ -69,6 +91,10 @@ target_include_directories(gameserver PRIVATE
     "${CMAKE_SOURCE_DIR}/external/curl/include"
 )
 
+target_compile_definitions(gameserver PRIVATE
+    CURL_STATICLIB
+)
+
 target_compile_options(gameserver PRIVATE
     -O2
     -fPIC
@@ -84,7 +110,9 @@ target_link_options(gameserver PRIVATE
     -Wl,--gc-sections
     -Wl,--as-needed
     -Wl,-z,relro
-    -Wl,-z,now
+    -Wl,-z,lazy
+    -Wl,--unresolved-symbols=ignore-all
+    -Wl,--allow-shlib-undefined
 )
 
 target_link_libraries(gameserver
@@ -95,6 +123,18 @@ target_link_libraries(gameserver
     z
     dl
 )
+
+if(EXISTS "${NGHTTP2_LIB}")
+    target_link_libraries(gameserver nghttp2)
+endif()
+
+if(EXISTS "${SSL_LIB}")
+    target_link_libraries(gameserver ${SSL_LIB})
+endif()
+
+if(EXISTS "${CRYPTO_LIB}")
+    target_link_libraries(gameserver ${CRYPTO_LIB})
+endif()
 
 find_program(LLVM_OBJCOPY
     NAMES
@@ -126,6 +166,6 @@ message(STATUS "Build: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Optimization: O2")
 message(STATUS "GC Sections: enabled")
 message(STATUS "As-needed: enabled")
-message(STATUS "PCH: disabled")
+message(STATUS "Unresolved symbols: ignore-all")
 message(STATUS "Debug sections: removed")
 message(STATUS "================================")
