@@ -252,42 +252,55 @@ bool Misc::Listen() {
         return false;
     }
 
-    {
-        uint8_t* base = (uint8_t*)netDriver;
-        uint64_t w = (uint64_t)world;
-        uint64_t e = (uint64_t)engine;
-        uint64_t c = (uint64_t)worldCtx;
+    MLOG("[Listen] === Setting up world->NetDriver ===");
+    world->NetDriver = (UNetDriver*)netDriver;
+    MLOG("[Listen] world->NetDriver = %p", world->NetDriver);
 
-        MLOG("[Listen] === Scanning netDriver memory (0x30..0x800) ===");
-
-        for (int off = 0x30; off < 0x800; off += 8) {
-            uint64_t val = 0;
-            memcpy(&val, base + off, 8);
-
-            if (val < 0x1000 || val > 0x7FFFFFFFFFFFULL) continue;
-
-            const char* label = nullptr;
-            if (val == w)      label = "WORLD";
-            else if (val == e) label = "ENGINE";
-            else if (val == c) label = "WORLDCTX";
-
-            if (label) {
-                MLOG("[Listen]   [%03x] = 0x%016llx  * %s",
-                     off, (unsigned long long)val, label);
-            }
-        }
-
-        MLOG("[Listen] === End scan ===");
+    for (int i = 0; i < world->LevelCollections.Num(); i++) {
+        world->LevelCollections[i].NetDriver = (UNetDriver*)netDriver;
     }
+    MLOG("[Listen] LevelCollections updated (%d)", world->LevelCollections.Num());
+
+    MLOG("[Listen] === Building FURL ===");
+    static char16_t hostBuf[] = u"0.0.0.0";
+    static char16_t protoBuf[] = u"unreal";
+    static char16_t emptyBuf[] = u"";
 
     FURLLocal url = {};
+    url.Protocol.Data = protoBuf;
+    url.Protocol.Num = 6;
+    url.Protocol.Max = 7;
+
+    url.Host.Data = hostBuf;
+    url.Host.Num = 7;
+    url.Host.Max = 8;
+
     url.Port = g_Port;
     url.Valid = 1;
 
+    url.Map.Data = emptyBuf;
+    url.Map.Num = 0;
+    url.Map.Max = 1;
+
+    url.RedirectURL.Data = emptyBuf;
+    url.RedirectURL.Num = 0;
+    url.RedirectURL.Max = 1;
+
+    url.Op.Data = emptyBuf;
+    url.Op.Num = 0;
+    url.Op.Max = 1;
+
+    url.Portal.Data = emptyBuf;
+    url.Portal.Num = 0;
+    url.Portal.Max = 1;
+
+    MLOG("[Listen] URL: host='0.0.0.0' port=%d", url.Port);
+
     using InitListen_t = bool (*)(void*, void*, FURLLocal*, bool, FStringLocal*);
     InitListen_t initListen = (InitListen_t)(Sarah::ImageBase + Off::InitListen);
-    MLOG("[Listen] M calling InitListen on port %d...", g_Port);
+    MLOG("[Listen] InitListen fn=%p", (void*)initListen);
 
+    MLOG("[Listen] M about to call InitListen...");
     bool listenOk = initListen(netDriver, world, &url, false, nullptr);
     MLOG("[Listen] N InitListen returned %d", (int)listenOk);
 
@@ -295,13 +308,6 @@ bool Misc::Listen() {
         MLOG("[Listen] FAIL: InitListen returned false");
         return false;
     }
-
-    world->NetDriver = (UNetDriver*)netDriver;
-
-    for (auto& collection : world->LevelCollections) {
-        collection.NetDriver = (UNetDriver*)netDriver;
-    }
-    MLOG("[Listen] L collections set");
 
     MLOG("[Listen] === Server listening on port %d ===", g_Port);
     return true;
