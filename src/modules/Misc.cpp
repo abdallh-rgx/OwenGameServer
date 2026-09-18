@@ -220,8 +220,15 @@ bool Misc::Listen() {
 
     MLOG("[Listen] J1 Before: Data=%p Num=%d Max=%d", *pData, *pNum, *pMax);
 
-    FName ipClassName = MakeFName(L"IpNetDriver");
-    MLOG("[Listen] J2 FName IpNetDriver=0x%x", ipClassName.ComparisonIndex);
+    MLOG("[Listen] J1b Existing entries:");
+    for (int i = 0; i < *pNum && i < 8; i++) {
+        FNetDriverDefLocal& d = (*pData)[i];
+        MLOG("[Listen]   entry[%d]: DefName=%08x DriverClass=%08x",
+             i, d.DefName.ComparisonIndex, d.DriverClassName.ComparisonIndex);
+    }
+
+    FName ipClassName = MakeFName(L"/Script/OnlineSubsystemUtils.IpNetDriver");
+    MLOG("[Listen] J2 FName IpNetDriver(fullpath)=0x%x", ipClassName.ComparisonIndex);
 
     FNetDriverDefLocal* savedData = *pData;
     int32_t savedNum = *pNum;
