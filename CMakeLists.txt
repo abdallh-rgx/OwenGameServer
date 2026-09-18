@@ -9,20 +9,12 @@ set(ANDROID_ABI "arm64-v8a")
 
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 
-if(NOT CMAKE_AR)
-    set(CMAKE_AR "ar")
-endif()
-
 set(DOBBY_LIB
     ${CMAKE_SOURCE_DIR}/external/Dobby/libs/${ANDROID_ABI}/libdobby.a
 )
 
 set(CURL_LIB
     ${CMAKE_SOURCE_DIR}/external/curl/libs/${ANDROID_ABI}/libcurl.a
-)
-
-set(CURL_PATCHED_LIB
-    ${CMAKE_BINARY_DIR}/libcurl_patched.a
 )
 
 if(NOT EXISTS "${DOBBY_LIB}")
@@ -38,30 +30,6 @@ set_target_properties(dobby PROPERTIES
     IMPORTED_LOCATION "${DOBBY_LIB}"
     INTERFACE_INCLUDE_DIRECTORIES
         "${CMAKE_SOURCE_DIR}/external/Dobby/include"
-)
-
-set(PATCH_SCRIPT "${CMAKE_BINARY_DIR}/patch_curl.sh")
-
-file(WRITE ${PATCH_SCRIPT}
-    "#!/bin/sh\n"
-    "set -e\n"
-    "cp -f \"${CURL_LIB}\" \"${CURL_PATCHED_LIB}\"\n"
-    "for obj in $(${CMAKE_AR} t \"${CURL_PATCHED_LIB}\" | grep -E 'h2|http2' || true); do\n"
-    "  ${CMAKE_AR} d \"${CURL_PATCHED_LIB}\" \"$obj\"\n"
-    "done\n"
-    "echo 'Patched libcurl.a'\n"
-)
-
-add_custom_command(
-    OUTPUT ${CURL_PATCHED_LIB}
-    COMMAND chmod +x ${PATCH_SCRIPT}
-    COMMAND sh ${PATCH_SCRIPT}
-    DEPENDS ${CURL_LIB} ${PATCH_SCRIPT}
-    COMMENT "Patching libcurl.a (removing all HTTP2-related objects)"
-)
-
-add_custom_target(patch_curl ALL
-    DEPENDS ${CURL_PATCHED_LIB}
 )
 
 file(GLOB_RECURSE OWEN_SOURCES
@@ -82,8 +50,6 @@ add_library(gameserver SHARED
     ${OWEN_SOURCES}
     ${SDK_SOURCES}
 )
-
-add_dependencies(gameserver patch_curl)
 
 target_include_directories(gameserver PRIVATE
     "${CMAKE_SOURCE_DIR}/src"
@@ -114,11 +80,12 @@ target_link_options(gameserver PRIVATE
     -Wl,--as-needed
     -Wl,-z,relro
     -Wl,-z,lazy
+    -Wl,--allow-multiple-definition
 )
 
 target_link_libraries(gameserver
     dobby
-    ${CURL_PATCHED_LIB}
+    ${CURL_LIB}
     log
     android
     z
@@ -155,6 +122,5 @@ message(STATUS "Build: ${CMAKE_BUILD_TYPE}")
 message(STATUS "Optimization: O2")
 message(STATUS "GC Sections: enabled")
 message(STATUS "As-needed: enabled")
-message(STATUS "curl: patched (no HTTP2 objects)")
-message(STATUS "AR tool: ${CMAKE_AR}")
+message(STATUS "curl stubs: enabled")
 message(STATUS "================================")
