@@ -9,6 +9,10 @@ set(ANDROID_ABI "arm64-v8a")
 
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 
+if(NOT CMAKE_AR)
+    set(CMAKE_AR "ar")
+endif()
+
 set(DOBBY_LIB
     ${CMAKE_SOURCE_DIR}/external/Dobby/libs/${ANDROID_ABI}/libdobby.a
 )
@@ -40,9 +44,9 @@ add_custom_command(
     OUTPUT ${CURL_PATCHED_LIB}
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CURL_LIB} ${CURL_PATCHED_LIB}
-    COMMAND llvm-ar d ${CURL_PATCHED_LIB} cf-h2-proxy.o
-    COMMAND llvm-ar d ${CURL_PATCHED_LIB} http2.o
-    COMMAND llvm-ar d ${CURL_PATCHED_LIB} http2-detect.o
+    COMMAND ${CMAKE_AR} d ${CURL_PATCHED_LIB} cf-h2-proxy.o
+    COMMAND ${CMAKE_AR} d ${CURL_PATCHED_LIB} http2.o
+    COMMAND ${CMAKE_AR} d ${CURL_PATCHED_LIB} http2-detect.o
     DEPENDS ${CURL_LIB}
     COMMENT "Patching libcurl.a (removing HTTP2 objects)"
 )
@@ -143,4 +147,5 @@ message(STATUS "Optimization: O2")
 message(STATUS "GC Sections: enabled")
 message(STATUS "As-needed: enabled")
 message(STATUS "curl: patched (no HTTP2 objects)")
+message(STATUS "AR tool: ${CMAKE_AR}")
 message(STATUS "================================")
