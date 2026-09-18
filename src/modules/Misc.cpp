@@ -55,9 +55,14 @@ namespace {
         FStringLocal Portal;
     };
 
+    struct FNameRaw {
+        uint32_t ComparisonIndex;
+        uint32_t Number;
+    };
+
     struct FNetDriverDefLocal {
-        FName DefName;
-        FName DriverClassName;
+        FNameRaw DefName;
+        FNameRaw DriverClassName;
     };
     static_assert(sizeof(FNetDriverDefLocal) == 16, "FNetDriverDef must be 16 bytes");
 }
@@ -208,13 +213,6 @@ bool Misc::Listen() {
         return false;
     }
 
-    // ================================================================
-    // تعبئة engine->NetDriverDefinitions قبل استدعاء CreateNetDriver
-    // FNetDriverDefinition = { FName DefName; FName DriverClassName; } = 16 bytes
-    // engine + 0xC40 = Data
-    // engine + 0xC48 = Num
-    // engine + 0xC4C = Max
-    // ================================================================
     uint8_t* engBase = (uint8_t*)engine;
     FNetDriverDefLocal** pData = (FNetDriverDefLocal**)(engBase + 0xC40);
     int32_t* pNum = (int32_t*)(engBase + 0xC48);
@@ -238,8 +236,10 @@ bool Misc::Listen() {
     }
 
     memset(localDefs, 0, sizeof(FNetDriverDefLocal) * 4);
-    localDefs[0].DefName = driverName;
-    localDefs[0].DriverClassName = ipClassName;
+    localDefs[0].DefName.ComparisonIndex = (uint32_t)driverName.ComparisonIndex;
+    localDefs[0].DefName.Number = 0;
+    localDefs[0].DriverClassName.ComparisonIndex = (uint32_t)ipClassName.ComparisonIndex;
+    localDefs[0].DriverClassName.Number = 0;
 
     *pData = localDefs;
     *pNum = 1;
@@ -298,7 +298,8 @@ bool Misc::Listen() {
         MLOG("[Listen] === End scan ===");
     }
 
-    *(FName*)((uint8_t*)netDriver + 0x208) = driverName;
+    *(uint32_t*)((uint8_t*)netDriver + 0x208) = (uint32_t)driverName.ComparisonIndex;
+    *(uint32_t*)((uint8_t*)netDriver + 0x20C) = 0;
     uint32_t readBackName = *(uint32_t*)((uint8_t*)netDriver + 0x208);
     MLOG("[Listen] K2 NetDriverName write=0x%x readback=0x%x %s",
          (uint32_t)driverName.ComparisonIndex, readBackName,
