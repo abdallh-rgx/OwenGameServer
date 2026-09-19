@@ -7,11 +7,11 @@
 #include "AndroidBase.hpp"
 #include "FName.hpp"
 
-class UObject;
-class UFunction;
-class FProperty;
-class FField;
-struct FOutParmRec;
+struct FOutParmRec {
+    SDK::FProperty* Property;
+    uint8_t* PropAddr;
+    FOutParmRec* NextOutParm;
+};
 
 class alignas(0x8) FOutputDevice {
 public:
@@ -22,8 +22,8 @@ public:
 class FFrame : public FOutputDevice {
 public:
     void** VTable;
-    UFunction* Node;
-    UObject* Object;
+    SDK::UFunction* Node;
+    SDK::UObject* Object;
     uint8_t* Code;
     uint8_t* Locals;
     void* MostRecentProperty;
@@ -34,12 +34,13 @@ public:
     FFrame* PreviousFrame;
     FOutParmRec* OutParms;
     uint8_t _Padding1[0x20];
-    FField* PropertyChainForCompiledIn;
-    UFunction* CurrentNativeFunction;
+    SDK::FField* PropertyChainForCompiledIn;
+    SDK::UFunction* CurrentNativeFunction;
     bool bArrayContextFailed;
 
     void StepCompiledIn(void* Result = nullptr, bool ForceExplicitProp = false) {
-        (void)Result; (void)ForceExplicitProp;
+        (void)Result;
+        (void)ForceExplicitProp;
     }
 
     template <typename T>
@@ -141,50 +142,50 @@ inline std::wstring FNameToWString(const FName& name) {
 
 class Utils {
 public:
-    static UObject* FindObject(const wchar_t* path, UClass* cls = nullptr);
-    static UObject* LoadObject(const wchar_t* path, UClass* cls = nullptr);
-    static UObject* FindOrLoad(const wchar_t* path, UClass* cls = nullptr);
+    static SDK::UObject* FindObject(const wchar_t* path, SDK::UClass* cls = nullptr);
+    static SDK::UObject* LoadObject(const wchar_t* path, SDK::UClass* cls = nullptr);
+    static SDK::UObject* FindOrLoad(const wchar_t* path, SDK::UClass* cls = nullptr);
 
-    template <typename T = UObject>
+    template <typename T = SDK::UObject>
     static T* Find(const wchar_t* path) {
         return (T*)FindObject(path, nullptr);
     }
 
-    template <typename T = UObject>
+    template <typename T = SDK::UObject>
     static T* Load(const wchar_t* path) {
         return (T*)LoadObject(path, nullptr);
     }
 
-    template <typename T = UObject>
+    template <typename T = SDK::UObject>
     static T* Get(const wchar_t* path) {
         return (T*)FindOrLoad(path, nullptr);
     }
 
-    static AActor* SpawnActor(UClass* cls, const FVector& loc, const FRotator& rot = FRotator(), AActor* owner = nullptr);
+    static SDK::AActor* SpawnActor(SDK::UClass* cls, const FVector& loc, const FRotator& rot = FRotator(), SDK::AActor* owner = nullptr);
 
-    template <typename T = AActor>
-    static T* SpawnActor(UClass* cls, const FVector& loc, const FRotator& rot = FRotator(), AActor* owner = nullptr) {
+    template <typename T = SDK::AActor>
+    static T* SpawnActor(SDK::UClass* cls, const FVector& loc, const FRotator& rot = FRotator(), SDK::AActor* owner = nullptr) {
         return (T*)SpawnActor(cls, loc, rot, owner);
     }
 
-    template <typename T = AActor>
-    static T* SpawnActor(const FVector& loc, const FRotator& rot = FRotator(), AActor* owner = nullptr) {
+    template <typename T = SDK::AActor>
+    static T* SpawnActor(const FVector& loc, const FRotator& rot = FRotator(), SDK::AActor* owner = nullptr) {
         return (T*)SpawnActor(T::StaticClass(), loc, rot, owner);
     }
 
-    static std::vector<AActor*> GetAllActors(UClass* cls);
+    static std::vector<SDK::AActor*> GetAllActors(SDK::UClass* cls);
 
-    template <typename T = AActor>
+    template <typename T = SDK::AActor>
     static std::vector<T*> GetAll() {
         std::vector<T*> out;
-        for (AActor* a : GetAllActors(T::StaticClass())) out.push_back((T*)a);
+        for (SDK::AActor* a : GetAllActors(T::StaticClass())) out.push_back((T*)a);
         return out;
     }
 
-    template <typename T = AActor>
-    static std::vector<T*> GetAll(UClass* cls) {
+    template <typename T = SDK::AActor>
+    static std::vector<T*> GetAll(SDK::UClass* cls) {
         std::vector<T*> out;
-        for (AActor* a : GetAllActors(cls)) out.push_back((T*)a);
+        for (SDK::AActor* a : GetAllActors(cls)) out.push_back((T*)a);
         return out;
     }
 
@@ -198,7 +199,7 @@ public:
     static void MarkArrayDirty(FFastArraySerializer& serializer);
 
     template <typename _Ot = void*>
-    static void ExecHook(UFunction* Fn, void* Detour, _Ot& Orig) {
+    static void ExecHook(SDK::UFunction* Fn, void* Detour, _Ot& Orig) {
         if (!Fn) return;
         Orig = (_Ot)Fn->ExecFunction;
         Fn->ExecFunction = reinterpret_cast<decltype(Fn->ExecFunction)>(Detour);
@@ -206,14 +207,14 @@ public:
 
     template <typename _Ot = void*>
     static void ExecHook(const wchar_t* FnPath, void* Detour, _Ot& Orig) {
-        UFunction* Fn = (UFunction*)FindObject(FnPath);
+        SDK::UFunction* Fn = (SDK::UFunction*)FindObject(FnPath);
         if (!Fn) return;
         Orig = (_Ot)Fn->ExecFunction;
         Fn->ExecFunction = reinterpret_cast<decltype(Fn->ExecFunction)>(Detour);
     }
 
     static void ExecHook(const wchar_t* FnPath, void* Detour) {
-        UFunction* Fn = (UFunction*)FindObject(FnPath);
+        SDK::UFunction* Fn = (SDK::UFunction*)FindObject(FnPath);
         if (!Fn) return;
         Fn->ExecFunction = reinterpret_cast<decltype(Fn->ExecFunction)>(Detour);
     }
