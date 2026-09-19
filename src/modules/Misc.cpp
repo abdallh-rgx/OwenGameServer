@@ -24,8 +24,8 @@ static void MLOG(const char* fmt, ...) {
 
     if (!g_miscLog) {
         const char* paths[] = {
-            "/storage/emulated/0/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
-            "/sdcard/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
+            "/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+            "/sdcard/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
         };
         for (auto p : paths) {
             g_miscLog = fopen(p, "a");
