@@ -70,7 +70,7 @@ static std::string DirectGetNameByIndex(int32 Index) {
     uint32_t blockIdx = ((uint32_t)Index) >> 16;
     uint32_t offsetInBlock = ((uint32_t)Index) & 0xFFFF;
 
-    if (blockIdx >= 8192) return "";
+    if (blockIdx >= 0x2000) return "";
 
     uint8_t* block = blocks[blockIdx];
     if (!block) return "";
@@ -78,20 +78,13 @@ static std::string DirectGetNameByIndex(int32 Index) {
     uint8_t* entryPtr = block + (uint64_t)offsetInBlock * Off::FNameEntry_Stride;
     if (!entryPtr) return "";
 
-    uint16_t header = *(uint16_t*)entryPtr;
-    bool isWide = (header & 0x01) != 0;
-    uint32_t len = header >> 1;
+    uint16_t header = *(uint16_t*)(entryPtr + Off::FNameEntry_Header);
+    bool isWide = (header & Off::FNameEntry_NameWideMask) != 0;
+    uint32_t len = header >> Off::FNameEntry_LengthShift;
 
-    if (len == 0) {
-        uint16_t header2 = *(uint16_t*)(entryPtr + 2);
-        isWide = (header2 & 0x01) != 0;
-        len = header2 >> 1;
-        entryPtr += 2;
-    }
+    if (len == 0 || len > 1024) return "";
 
-    if (len == 0 || len > 4096) return "";
-
-    uint8_t* nameData = entryPtr + 2;
+    uint8_t* nameData = entryPtr + Off::FNameEntry_String;
     std::string result;
     result.reserve(len);
 
