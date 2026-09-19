@@ -39,6 +39,7 @@ void Player::ServerExecuteInventoryItem(UObject* context, Params::AFortPlayerCon
 void Player::ServerReturnToMainMenu(UObject* context) {
     auto playerController = (AFortPlayerController*)context;
     if (!playerController) return;
+    if (!playerController->NetConnection) return;
     playerController->ClientReturnToMainMenu(Utils::ToFString(L""));
 }
 
@@ -343,9 +344,7 @@ void Player::TeleportPlayerPawn(UObject* context, Params::UFortMissionLibrary_Te
 }
 
 void Player::ServerChangeName(UObject* context, Params::APlayerController_ServerChangeName* params) {
-    auto controller = (AFortPlayerControllerAthena*)context;
-    if (!controller) return;
-    controller->ClientReturnToMainMenu(Utils::ToFString(L""));
+    return;
 }
 
 static void GiveElimHeal(AFortPlayerPawnAthena* killerPawn) {
