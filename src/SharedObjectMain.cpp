@@ -22,9 +22,9 @@ static std::mutex g_log_mutex;
 
 static void InitLogFile() {
     const char* paths[] = {
-        "/storage/emulated/0/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
-        "/sdcard/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
-        "/data/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
+        "/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+        "/sdcard/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+        "/data/data/com.epicgames.fortnite/files/OwenGameServer.txt",
         "/data/local/tmp/OwenGameServer.txt"
     };
 
@@ -336,6 +336,48 @@ static void WaitForWorld() {
     LOGF("[CORE] World wait timeout");
 }
 
+static bool ExecuteOpenCommand(const wchar_t* cmd) {
+    UWorld* world = UWorld::GetWorld();
+    if (!world) return false;
+
+    static char16_t cmdBuf[512];
+    int len = 0;
+    for (const wchar_t* p = cmd; *p && len < 500; p++) {
+        cmdBuf[len++] = (char16_t)(*p);
+    }
+    cmdBuf[len] = 0;
+
+    struct FStringLocal {
+        char16_t* Data;
+        int32_t Num;
+        int32_t Max;
+    };
+
+    struct ExecCmdParams {
+        UObject* WorldContextObject;
+        FStringLocal Command;
+        APlayerController* SpecificPlayer;
+    };
+
+    UFunction* execFn = (UFunction*)Utils::FindObject(
+        L"/Script/Engine.KismetSystemLibrary.ExecuteConsoleCommand");
+    UClass* kslClass = (UClass*)Utils::FindObject(
+        L"/Script/Engine.KismetSystemLibrary");
+
+    if (!execFn || !kslClass || !kslClass->ClassDefaultObject)
+        return false;
+
+    ExecCmdParams parms = {};
+    parms.WorldContextObject = world;
+    parms.Command.Data = cmdBuf;
+    parms.Command.Num = len;
+    parms.Command.Max = len + 1;
+    parms.SpecificPlayer = nullptr;
+
+    Sarah::CallProcessEvent(kslClass->ClassDefaultObject, execFn, &parms);
+    return true;
+}
+
 static void MainThread() {
     LOGF("[MAIN] MainThread started");
 
@@ -375,35 +417,27 @@ static void MainThread() {
 
     LOGF("[HOOKS] Installing ProcessEvent");
     DobbyHook((void*)(Sarah::ImageBase + Off::ProcessEvent), (void*)ProcessEventHook, (void**)&ProcessEventOG);
-    LOGF("[HOOKS] ProcessEvent installed");
 
     LOGF("[HOOKS] Installing GetNetMode");
     DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
-    LOGF("[HOOKS] GetNetMode installed");
 
     LOGF("[HOOKS] Installing TickFlush");
     DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
-    LOGF("[HOOKS] TickFlush installed");
 
     LOGF("[HOOKS] Installing ClientOnPawnDied");
     DobbyHook((void*)(Sarah::ImageBase + Off::ClientOnPawnDied), (void*)Player::ClientOnPawnDied, (void**)&Player::ClientOnPawnDiedOG);
-    LOGF("[HOOKS] ClientOnPawnDied installed");
 
     LOGF("[HOOKS] Installing BuildingActor_OnDamageServer");
     DobbyHook((void*)(Sarah::ImageBase + Off::BuildingActor_OnDamageServer), (void*)Building::OnDamageServer, (void**)&Building::BuildingActor_OnDamageServerOG);
-    LOGF("[HOOKS] BuildingActor_OnDamageServer installed");
 
     LOGF("[HOOKS] Installing PickTeam");
     DobbyHook((void*)(Sarah::ImageBase + Off::PickTeam), (void*)PickTeamHook, (void**)&PickTeamOG);
-    LOGF("[HOOKS] PickTeam installed");
 
     LOGF("[HOOKS] Installing StartAircraftPhase");
     DobbyHook((void*)(Sarah::ImageBase + Off::StartAircraftPhase), (void*)Misc::StartAircraftPhase, (void**)&Misc::StartAircraftPhaseOG);
-    LOGF("[HOOKS] StartAircraftPhase installed");
 
     LOGF("[HOOKS] Installing SpawnDefaultPawnFor");
     DobbyHook((void*)(Sarah::ImageBase + Off::SpawnDefaultPawnFor), (void*)SpawnDefaultPawnForHook, (void**)&SpawnDefaultPawnForOG);
-    LOGF("[HOOKS] SpawnDefaultPawnFor installed");
 
     if (bGameSessions) {
         LOGF("[PATCH] Applying GameSession patch");
@@ -413,57 +447,27 @@ static void MainThread() {
 
     LOGF("[CORE] All hooks installed");
 
+    LOGF("[MAP] Starting map travel");
+
+    const wchar_t* cmd = bCreative
+        ? L"open Creative_NoApollo_Terrain"
+        : L"open Artemis_Terrain";
+
+    if (ExecuteOpenCommand(cmd)) {
+        LOGF("[MAP] Map travel requested");
+    } else {
+        LOGF("[MAP] FAIL: ExecuteConsoleCommand not found");
+    }
+
+    LOGF("[MAP] Waiting for map to load");
+    std::this_thread::sleep_for(std::chrono::seconds(20));
+    LOGF("[MAP] Map load wait finished");
+
     LOGF("[CORE] Starting Listen");
     if (Misc::Listen()) {
         LOGF("[CORE] Server is listening");
     } else {
         LOGF("[CORE] Listen FAILED");
-    }
-
-    LOGF("[MAP] Starting map travel");
-
-    UWorld* oldWorld = UWorld::GetWorld();
-
-    static char16_t cmdBuf[512];
-    const wchar_t* cmd = bCreative
-        ? L"open Creative_NoApollo_Terrain"
-        : L"open Artemis_Terrain";
-
-    int len = 0;
-    for (const wchar_t* p = cmd; *p && len < 500; p++) {
-        cmdBuf[len++] = (char16_t)(*p);
-    }
-    cmdBuf[len] = 0;
-
-    struct FStringLocal {
-        char16_t* Data;
-        int32_t Num;
-        int32_t Max;
-    };
-
-    struct ExecCmdParams {
-        UObject* WorldContextObject;
-        FStringLocal Command;
-        APlayerController* SpecificPlayer;
-    };
-
-    UFunction* execFn = (UFunction*)Utils::FindObject(
-        L"/Script/Engine.KismetSystemLibrary.ExecuteConsoleCommand");
-    UClass* kslClass = (UClass*)Utils::FindObject(
-        L"/Script/Engine.KismetSystemLibrary");
-
-    if (execFn && kslClass && kslClass->ClassDefaultObject) {
-        ExecCmdParams parms = {};
-        parms.WorldContextObject = oldWorld;
-        parms.Command.Data = cmdBuf;
-        parms.Command.Num = len;
-        parms.Command.Max = len + 1;
-        parms.SpecificPlayer = nullptr;
-
-        Sarah::CallProcessEvent(kslClass->ClassDefaultObject, execFn, &parms);
-        LOGF("[MAP] Map travel requested");
-    } else {
-        LOGF("[MAP] FAIL: ExecuteConsoleCommand not found");
     }
 
     LOGF("[CORE] MainThread done");
