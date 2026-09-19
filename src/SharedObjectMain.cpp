@@ -22,9 +22,9 @@ static std::mutex g_log_mutex;
 
 static void InitLogFile() {
     const char* paths[] = {
-        "/storage/emulated/0/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
-        "/sdcard/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
-        "/data/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
+        "/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+        "/sdcard/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+        "/data/data/com.epicgames.fortnite/files/OwenGameServer.txt",
         "/data/local/tmp/OwenGameServer.txt"
     };
 
