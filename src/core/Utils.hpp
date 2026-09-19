@@ -173,3 +173,23 @@ public:
 namespace Sarah {
 void* EngineRealloc(void* ptr, int64_t newLen, uint32_t alignment);
 }
+
+#define STACK_SAVE(_Stack, _Saved) FFrame _Saved = (_Stack)
+#define CALL_OG_VOID(_Stack, _Ctx, _OG, _Saved) do { \
+    if (_OG && (_Stack).CurrentNativeFunction) { \
+        auto _f = (_Stack).CurrentNativeFunction; \
+        auto _orig = _f->ExecFunction; \
+        _f->ExecFunction = (decltype(_f->ExecFunction))_OG; \
+        _OG((_Ctx), _Saved); \
+        _f->ExecFunction = _orig; \
+    } \
+} while(0)
+#define CALL_OG_RET(_Stack, _Ctx, _OG, _Saved, _Ret) do { \
+    if (_OG && (_Stack).CurrentNativeFunction) { \
+        auto _f = (_Stack).CurrentNativeFunction; \
+        auto _orig = _f->ExecFunction; \
+        _f->ExecFunction = (decltype(_f->ExecFunction))_OG; \
+        _OG((_Ctx), _Saved, (_Ret)); \
+        _f->ExecFunction = _orig; \
+    } \
+} while(0)
