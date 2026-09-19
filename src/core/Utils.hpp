@@ -1,10 +1,59 @@
 #pragma once
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 #include "Offsets.hpp"
 #include "AndroidBase.hpp"
 #include "FName.hpp"
+
+class UObject;
+class UFunction;
+class FProperty;
+class FField;
+struct FOutParmRec;
+
+class alignas(0x8) FOutputDevice {
+public:
+    bool bSuppressEventTag;
+    bool bAutoEmitLineTerminator;
+};
+
+class FFrame : public FOutputDevice {
+public:
+    void** VTable;
+    UFunction* Node;
+    UObject* Object;
+    uint8_t* Code;
+    uint8_t* Locals;
+    void* MostRecentProperty;
+    uint8_t* MostRecentPropertyAddress;
+    void* FlowStackData;
+    int32_t FlowStackNum;
+    int32_t FlowStackMax;
+    FFrame* PreviousFrame;
+    FOutParmRec* OutParms;
+    uint8_t _Padding1[0x20];
+    FField* PropertyChainForCompiledIn;
+    UFunction* CurrentNativeFunction;
+    bool bArrayContextFailed;
+
+    void StepCompiledIn(void* Result = nullptr, bool ForceExplicitProp = false) {
+        (void)Result; (void)ForceExplicitProp;
+    }
+
+    template <typename T>
+    T& StepCompiledInRef() {
+        static T TempVal{};
+        TempVal = T{};
+        MostRecentPropertyAddress = nullptr;
+        return TempVal;
+    }
+
+    void IncrementCode() {
+        Code = (uint8_t*)((uint64_t)Code + (bool)Code);
+    }
+};
 
 struct FVectorLocal {
     double X, Y, Z;
@@ -175,6 +224,7 @@ void* EngineRealloc(void* ptr, int64_t newLen, uint32_t alignment);
 }
 
 #define STACK_SAVE(_Stack, _Saved) FFrame _Saved = (_Stack)
+
 #define CALL_OG_VOID(_Stack, _Ctx, _OG, _Saved) do { \
     if (_OG && (_Stack).CurrentNativeFunction) { \
         auto _f = (_Stack).CurrentNativeFunction; \
@@ -184,6 +234,7 @@ void* EngineRealloc(void* ptr, int64_t newLen, uint32_t alignment);
         _f->ExecFunction = _orig; \
     } \
 } while(0)
+
 #define CALL_OG_RET(_Stack, _Ctx, _OG, _Saved, _Ret) do { \
     if (_OG && (_Stack).CurrentNativeFunction) { \
         auto _f = (_Stack).CurrentNativeFunction; \
