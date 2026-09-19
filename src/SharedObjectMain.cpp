@@ -350,8 +350,12 @@ static bool ExecuteOpenCommand(const wchar_t* cmd) {
         return false;
     }
 
-    LOGF("[MAP] Current map before travel: %s", world->GetMapName().c_str());
-
+    std::string mapName = "unknown";
+if (world->PersistentLevel) {
+    mapName = world->PersistentLevel->GetName();
+}
+LOGF("[MAP] Current map before travel: %s", mapName.c_str());
+    
     static char16_t cmdBuf[512];
     int len = 0;
     for (const wchar_t* p = cmd; *p && len < 500; p++) {
