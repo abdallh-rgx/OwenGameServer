@@ -64,8 +64,7 @@ inline bool IsAddressSane(uintptr_t addr) {
     return addr >= 0x1000u && addr < 0x0000800000000000ull;
 }
 
-uintptr_t GetNameEntryByIndex(int32 Index, int Depth) {
-    if (Depth > 4) return 0;
+uintptr_t GetNameEntryByIndex(int32 Index) {
     if (Index < 0) return 0;
     if (!Sarah::ImageBase) return 0;
 
@@ -98,19 +97,33 @@ bool ReadFNameEntryString(uintptr_t entryPtr, std::string& outResult, int Depth)
     if (Depth > 4) return false;
     if (!IsAddressSane(entryPtr)) return false;
 
+    const uintptr_t poolBase   = (uintptr_t)(Sarah::ImageBase + Off::GNames);
+    const uintptr_t blocksAddr = poolBase + (uintptr_t)Off::FNamePool_Blocks;
+
+    const uint64_t blockSize = (uint64_t)Off::FNameEntry_Stride << (uint32_t)Off::FNamePool_BlocksBit;
+
     const uint16_t header = *(const uint16_t*)(entryPtr + (uintptr_t)Off::FNameEntry_Header);
     const bool isWide     = (header & (uint16_t)Off::FNameEntry_NameWideMask) != 0;
     const uint32_t len    = (uint32_t)(header >> (uint32_t)Off::FNameEntry_LengthShift);
 
     if (len == 0) {
         const uintptr_t idFieldOffset = entryPtr + (uintptr_t)Off::FNameEntry_String;
-        const int32_t nextEntryIndex  = *(const int32_t*)(idFieldOffset);
-        const int32_t strNumber       = *(const int32_t*)(idFieldOffset + 4);
+
+        if (!IsAddressSane(idFieldOffset + 8)) return false;
+
+        const int32_t nextEntryIndex = *(const int32_t*)(idFieldOffset);
+        const int32_t strNumber      = *(const int32_t*)(idFieldOffset + 4);
 
         if (nextEntryIndex < 0 || strNumber <= 0) return false;
+        if (nextEntryIndex >= (1 << 24)) return false;
 
-        const uintptr_t baseEntry = GetNameEntryByIndex(nextEntryIndex, Depth + 1);
+        const uintptr_t baseEntry = GetNameEntryByIndex(nextEntryIndex);
         if (!baseEntry) return false;
+
+        if ((uint64_t)(baseEntry - (uintptr_t)entryPtr) >= blockSize &&
+            (uint64_t)((uintptr_t)entryPtr - baseEntry) >= blockSize)
+        {
+        }
 
         std::string baseName;
         if (!ReadFNameEntryString(baseEntry, baseName, Depth + 1)) return false;
@@ -124,9 +137,9 @@ bool ReadFNameEntryString(uintptr_t entryPtr, std::string& outResult, int Depth)
     if (len > 1024u) return false;
 
     const uint64_t nameBytes = isWide ? ((uint64_t)len * 2ull) : (uint64_t)len;
-    if (!IsAddressSane(entryPtr + (uintptr_t)Off::FNameEntry_String + nameBytes)) return false;
+    const uintptr_t nameData = entryPtr + (uintptr_t)Off::FNameEntry_String;
 
-    const uint8_t* nameData = (const uint8_t*)(entryPtr + (uintptr_t)Off::FNameEntry_String);
+    if (!IsAddressSane(nameData + nameBytes)) return false;
 
     std::string result;
     result.reserve((size_t)len);
@@ -163,7 +176,7 @@ bool ReadFNameEntryString(uintptr_t entryPtr, std::string& outResult, int Depth)
 }
 
 std::string InSDKUtils::GetNameByIndex(int32 Index) {
-    const uintptr_t entry = GetNameEntryByIndex(Index, 0);
+    const uintptr_t entry = GetNameEntryByIndex(Index);
     if (!entry) return std::string();
 
     std::string result;
