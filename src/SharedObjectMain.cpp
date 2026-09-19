@@ -22,9 +22,9 @@ static std::mutex g_log_mutex;
 
 static void InitLogFile() {
     const char* paths[] = {
-        "/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
-        "/sdcard/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
-        "/data/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+        "/storage/emulated/0/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
+        "/sdcard/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
+        "/data/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
         "/data/local/tmp/OwenGameServer.txt"
     };
 
@@ -423,13 +423,13 @@ static void MainThread() {
         LOGF("[CORE] GObjects Num = %d", Sarah::UObjectManager::Num());
     }
 
-    LOGF("[CORE] Before SetDedicatedServerMode");
+    LOGF("[CORE] Before SetClientOffOnly");
     LOGF("[CORE] GIsEditor=%d GIsClient=%d GIsServer=%d",
          GetGIsEditor(), GetGIsClient(), GetGIsServer());
 
-    SetDedicatedServerMode();
+    SetClientOffOnly();
 
-    LOGF("[CORE] After SetDedicatedServerMode");
+    LOGF("[CORE] After SetClientOffOnly (GIsServer untouched)");
     LOGF("[CORE] GIsEditor=%d GIsClient=%d GIsServer=%d",
          GetGIsEditor(), GetGIsClient(), GetGIsServer());
 
@@ -469,9 +469,6 @@ static void MainThread() {
     }
 
     LOGF("[CORE] All hooks installed");
-
-    LOGF("[MAP] Waiting for Frontend to finish loading");
-    std::this_thread::sleep_for(std::chrono::seconds(30));
 
     LOGF("[MAP] Requesting map travel to Artemis_Terrain");
     const wchar_t* cmd = bCreative
