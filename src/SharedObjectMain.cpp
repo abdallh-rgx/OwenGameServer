@@ -482,7 +482,11 @@ static void MainThread() {
         LOGF("[MAP] FAIL: ExecuteConsoleCommand failed");
     }
 
-    LOGF("[MAP] Waiting for Artemis_Terrain to load");
+    std::string mapName = "unknown";
+if (world->PersistentLevel) {
+    mapName = world->PersistentLevel->GetName();
+}
+LOGF("[MAP] After travel: map=%s", mapName.c_str());
     std::this_thread::sleep_for(std::chrono::seconds(60));
 
     UWorld* world = UWorld::GetWorld();
