@@ -140,20 +140,34 @@ public:
     }
 
     static float EvaluateScalableFloat(FScalableFloat& value);
-
     static float EvaluateCurve(FCurveTableRowHandle& handle, float inTime);
-
     static FString ToFString(const std::wstring& s);
-
     static std::wstring FromFString(const FString& s);
-
     static bool TagContainerHasTag(const FGameplayTagContainer& container, const wchar_t* tagName);
-
     static bool TagContainerHasAll(const FGameplayTagContainer& container, const FGameplayTagContainer& required);
-
     static void MarkItemDirty(FFastArraySerializer& serializer, FFastArraySerializerItem& item);
-
     static void MarkArrayDirty(FFastArraySerializer& serializer);
+
+    template <typename _Ot = void*>
+    static void ExecHook(UFunction* Fn, void* Detour, _Ot& Orig) {
+        if (!Fn) return;
+        Orig = (_Ot)Fn->ExecFunction;
+        Fn->ExecFunction = reinterpret_cast<decltype(Fn->ExecFunction)>(Detour);
+    }
+
+    template <typename _Ot = void*>
+    static void ExecHook(const wchar_t* FnPath, void* Detour, _Ot& Orig) {
+        UFunction* Fn = (UFunction*)FindObject(FnPath);
+        if (!Fn) return;
+        Orig = (_Ot)Fn->ExecFunction;
+        Fn->ExecFunction = reinterpret_cast<decltype(Fn->ExecFunction)>(Detour);
+    }
+
+    static void ExecHook(const wchar_t* FnPath, void* Detour) {
+        UFunction* Fn = (UFunction*)FindObject(FnPath);
+        if (!Fn) return;
+        Fn->ExecFunction = reinterpret_cast<decltype(Fn->ExecFunction)>(Detour);
+    }
 };
 
 namespace Sarah {
