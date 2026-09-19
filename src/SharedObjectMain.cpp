@@ -22,9 +22,9 @@ static std::mutex g_log_mutex;
 
 static void InitLogFile() {
     const char* paths[] = {
-        "/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
-        "/sdcard/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
-        "/data/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+        "/storage/emulated/0/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
+        "/sdcard/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
+        "/data/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
         "/data/local/tmp/OwenGameServer.txt"
     };
     for (auto path : paths) {
@@ -138,8 +138,9 @@ static void InstallNativeHooks() {
     DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
     LOGF("[HOOKS]   GetNetMode OK");
 
-    DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
-    LOGF("[HOOKS]   TickFlush OK");
+    // DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
+    // LOGF("[HOOKS]   TickFlush OK");
+    LOGF("[HOOKS]   TickFlush DISABLED for diagnosis");
 
     DobbyHook((void*)(Sarah::ImageBase + Off::ClientOnPawnDied), (void*)Player::ClientOnPawnDied, (void**)&Player::ClientOnPawnDiedOG);
     LOGF("[HOOKS]   ClientOnPawnDied OK");
