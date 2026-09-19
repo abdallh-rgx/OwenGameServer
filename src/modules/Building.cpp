@@ -112,7 +112,8 @@ void Building::ServerBeginEditingBuildingActorHook(UObject* Context, FFrame& Sta
 
     playerController->MyFortPawn->EquipWeaponDefinition((UFortWeaponItemDefinition*)editToolEntry->ItemDefinition, editToolEntry->ItemGuid, editToolEntry->TrackerGuid, false);
 
-    if (auto editTool = CastSDK<AFortWeap_EditingTool>(playerController->MyFortPawn->CurrentWeapon)) {
+    auto editTool = CastSDK<AFortWeap_EditingTool>(playerController->MyFortPawn->CurrentWeapon);
+    if (editTool) {
         editTool->EditActor = building;
         editTool->OnRep_EditActor();
     }
@@ -171,7 +172,8 @@ void Building::ServerEndEditingBuildingActorHook(UObject* Context, FFrame& Stack
 
     playerController->MyFortPawn->EquipWeaponDefinition((UFortWeaponItemDefinition*)editToolEntry->ItemDefinition, editToolEntry->ItemGuid, editToolEntry->TrackerGuid, false);
 
-    if (auto editTool = CastSDK<AFortWeap_EditingTool>(playerController->MyFortPawn->CurrentWeapon)) {
+    auto editTool = CastSDK<AFortWeap_EditingTool>(playerController->MyFortPawn->CurrentWeapon);
+    if (editTool) {
         editTool->EditActor = nullptr;
         editTool->OnRep_EditActor();
     }
@@ -207,7 +209,7 @@ void Building::ServerSpawnDecoHook(UObject* Context, FFrame& Stack) {
     FVector Location;
     FRotator Rotation;
     ABuildingSMActor* AttachedActor = nullptr;
-    EBuildingAttachmentType InBuildingAttachmentType = EBuildingAttachmentType::ATTACH_None;
+    EEBuildingAttachmentType InBuildingAttachmentType = EEBuildingAttachmentType::ATTACH_None;
     Stack.StepCompiledIn(&Location);
     Stack.StepCompiledIn(&Rotation);
     Stack.StepCompiledIn(&AttachedActor);
@@ -217,7 +219,7 @@ void Building::ServerSpawnDecoHook(UObject* Context, FFrame& Stack) {
     auto DecoTool = (AFortDecoTool*)Context;
     if (DecoTool && AttachedActor) {
         auto ItemDefinition = (UFortDecoItemDefinition*)DecoTool->ItemDefinition;
-        if (auto ContextTrapTool = DecoTool->Cast<AFortDecoTool_ContextTrap>()) {
+        if (auto ContextTrapTool = CastSDK<AFortDecoTool_ContextTrap>(DecoTool)) {
             switch ((int)InBuildingAttachmentType) {
             case 0: case 6: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->FloorTrap; break;
             case 7: case 2: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->CeilingTrap; break;
@@ -260,7 +262,7 @@ void Building::ServerCreateBuildingAndSpawnDecoHook(UObject* Context, FFrame& St
     FRotator BuildingRotation;
     FVector_NetQuantize10 Location;
     FRotator Rotation;
-    EBuildingAttachmentType InBuildingAttachmentType = EBuildingAttachmentType::ATTACH_None;
+    EEBuildingAttachmentType InBuildingAttachmentType = EEBuildingAttachmentType::ATTACH_None;
     bool bSpawnDecoOnExtraPiece = false;
     FVector BuildingExtraPieceLocation;
     Stack.StepCompiledIn(&BuildingLocation);
@@ -278,7 +280,7 @@ void Building::ServerCreateBuildingAndSpawnDecoHook(UObject* Context, FFrame& St
         auto playerController = pawn ? CastSDK<AFortPlayerControllerAthena>(pawn->Controller) : nullptr;
         if (playerController) {
             auto ItemDefinition = (UFortDecoItemDefinition*)Tool->ItemDefinition;
-            if (auto ContextTrapTool = Tool->Cast<AFortDecoTool_ContextTrap>()) {
+            if (auto ContextTrapTool = CastSDK<AFortDecoTool_ContextTrap>(Tool)) {
                 switch ((int)InBuildingAttachmentType) {
                 case 0: case 6: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->FloorTrap; break;
                 case 7: case 2: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->CeilingTrap; break;
