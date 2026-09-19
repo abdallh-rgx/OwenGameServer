@@ -238,8 +238,8 @@ void Looting::K2_SpawnPickupInWorldHook(UObject* Context, FFrame& Stack, AFortPi
     int32 OverrideMaxStackCount = 0;
     bool bToss = false, bRandomRotation = false, bBlockedFromAutoPickup = false;
     int32 PickupInstigatorHandle = 0;
-    EFortPickupSourceTypeFlag SourceType{};
-    EFortPickupSpawnSource Source{};
+    EEFortPickupSourceTypeFlag SourceType{};
+    EEFortPickupSpawnSource Source{};
     AFortPlayerController* OptionalOwnerPC = nullptr;
     bool bPickupOnlyRelevantToOwner = false;
     Stack.StepCompiledIn(&WorldContextObject);
