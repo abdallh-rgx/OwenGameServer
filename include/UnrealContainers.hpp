@@ -14,7 +14,22 @@
 #include <iostream>
 #include <optional>
 #include <cstring> // strlen
+// <concepts>: NDK r25c (libc++ 14) ships a stub <concepts> that lacks
+// std::equality_comparable; the local concept below fills the gap with
+// equivalent semantics for the requires-clauses in this header.
+#include <concepts>
 #include "UtfN.hpp"
+
+#if !defined(__cpp_lib_concepts)
+namespace UCConceptsCompat
+{
+        template <typename T>
+        concept EqualityComparable = requires(const T& A, const T& B) { A == B; };
+}
+#define UC_EQUALITY_COMPARABLE_CONCEPT UCConceptsCompat::EqualityComparable
+#else
+#define UC_EQUALITY_COMPARABLE_CONCEPT std::equality_comparable
+#endif
 
 #ifndef IMPORT_CPP_SDK_INTO_IDA
 namespace UC
@@ -386,7 +401,7 @@ namespace UC
         }
 
         inline std::optional<ArrayElementType> Find(const ArrayElementType& ElementToSearch) const
-            requires std::equality_comparable<ArrayElementType>
+            requires UC_EQUALITY_COMPARABLE_CONCEPT<ArrayElementType>
         {
             for (const auto& Element : *this)
             {
@@ -404,7 +419,7 @@ namespace UC
         }
 
         inline bool Contains(const ArrayElementType& ElementToSearch) const
-            requires std::equality_comparable<ArrayElementType>
+            requires UC_EQUALITY_COMPARABLE_CONCEPT<ArrayElementType>
         {
             return Find(ElementToSearch).has_value();
         }

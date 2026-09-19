@@ -58,130 +58,26 @@ TUObjectArray* InSDKUtils::GetGObjects() {
     return reinterpret_cast<TUObjectArray*>(Sarah::ImageBase + Off::GObjects);
 }
 
-namespace {
-
-inline bool IsAddressSane(uintptr_t addr) {
-    return addr >= 0x1000u && addr < 0x0000800000000000ull;
-}
-
-uintptr_t GetNameEntryByIndex(int32 Index) {
-    if (Index < 0) return 0;
-    if (!Sarah::ImageBase) return 0;
-
-    const uintptr_t poolBase = (uintptr_t)(Sarah::ImageBase + Off::GNames);
-    if (!IsAddressSane(poolBase)) return 0;
-
-    const uintptr_t blocksAddr = poolBase + (uintptr_t)Off::FNamePool_Blocks;
-    if (!IsAddressSane(blocksAddr)) return 0;
-
-    const uint32_t blockIdx = ((uint32_t)Index) >> (uint32_t)Off::FNamePool_BlocksBit;
-    const uint32_t entryIdx = ((uint32_t)Index) & ((1u << (uint32_t)Off::FNamePool_BlocksBit) - 1u);
-
-    if (blockIdx >= 0x2000u) return 0;
-
-    const uintptr_t blockSlotAddr = blocksAddr + (uintptr_t)blockIdx * sizeof(void*);
-    if (!IsAddressSane(blockSlotAddr)) return 0;
-
-    const uint8_t* block = *(const uint8_t**)(blockSlotAddr);
-    if (!block) return 0;
-    if (!IsAddressSane((uintptr_t)block)) return 0;
-
-    const uint64_t byteOffset = (uint64_t)entryIdx * (uint64_t)Off::FNameEntry_Stride;
-    const uint64_t blockSize  = (uint64_t)Off::FNameEntry_Stride << (uint32_t)Off::FNamePool_BlocksBit;
-    if (byteOffset >= blockSize) return 0;
-
-    return (uintptr_t)(block + byteOffset);
-}
-
-bool ReadFNameEntryString(uintptr_t entryPtr, std::string& outResult, int Depth) {
-    if (Depth > 4) return false;
-    if (!IsAddressSane(entryPtr)) return false;
-
-    const uintptr_t poolBase   = (uintptr_t)(Sarah::ImageBase + Off::GNames);
-    const uintptr_t blocksAddr = poolBase + (uintptr_t)Off::FNamePool_Blocks;
-
-    const uint64_t blockSize = (uint64_t)Off::FNameEntry_Stride << (uint32_t)Off::FNamePool_BlocksBit;
-
-    const uint16_t header = *(const uint16_t*)(entryPtr + (uintptr_t)Off::FNameEntry_Header);
-    const bool isWide     = (header & (uint16_t)Off::FNameEntry_NameWideMask) != 0;
-    const uint32_t len    = (uint32_t)(header >> (uint32_t)Off::FNameEntry_LengthShift);
-
-    if (len == 0) {
-        const uintptr_t idFieldOffset = entryPtr + (uintptr_t)Off::FNameEntry_String;
-
-        if (!IsAddressSane(idFieldOffset + 8)) return false;
-
-        const int32_t nextEntryIndex = *(const int32_t*)(idFieldOffset);
-        const int32_t strNumber      = *(const int32_t*)(idFieldOffset + 4);
-
-        if (nextEntryIndex < 0 || strNumber <= 0) return false;
-        if (nextEntryIndex >= (1 << 24)) return false;
-
-        const uintptr_t baseEntry = GetNameEntryByIndex(nextEntryIndex);
-        if (!baseEntry) return false;
-
-        if ((uint64_t)(baseEntry - (uintptr_t)entryPtr) >= blockSize &&
-            (uint64_t)((uintptr_t)entryPtr - baseEntry) >= blockSize)
-        {
-        }
-
-        std::string baseName;
-        if (!ReadFNameEntryString(baseEntry, baseName, Depth + 1)) return false;
-
-        outResult = baseName;
-        outResult += '_';
-        outResult += std::to_string((uint32_t)strNumber - 1u);
-        return true;
-    }
-
-    if (len > 1024u) return false;
-
-    const uint64_t nameBytes = isWide ? ((uint64_t)len * 2ull) : (uint64_t)len;
-    const uintptr_t nameData = entryPtr + (uintptr_t)Off::FNameEntry_String;
-
-    if (!IsAddressSane(nameData + nameBytes)) return false;
-
-    std::string result;
-    result.reserve((size_t)len);
-
-    if (isWide) {
-        const char16_t* w = (const char16_t*)nameData;
-        for (uint32_t i = 0; i < len; i++) {
-            const char16_t c = w[i];
-            if (c == 0) break;
-            if (c < 0x80) {
-                result.push_back((char)c);
-            } else if (c < 0x800) {
-                result.push_back((char)(0xC0 | (c >> 6)));
-                result.push_back((char)(0x80 | (c & 0x3F)));
-            } else {
-                result.push_back((char)(0xE0 | (c >> 12)));
-                result.push_back((char)(0x80 | ((c >> 6) & 0x3F)));
-                result.push_back((char)(0x80 | (c & 0x3F)));
-            }
-        }
-    } else {
-        const char* n = (const char*)nameData;
-        for (uint32_t i = 0; i < len; i++) {
-            const char c = n[i];
-            if (c == 0) break;
-            result.push_back(c);
-        }
-    }
-
-    outResult = std::move(result);
-    return true;
-}
-
-}
+// ============================================================
+// FName reading — MobileDumper-7 bridge
+// ------------------------------------------------------------
+// The manual FNamePool walker that used to live here read the pool with raw
+// pointer dereferences (*(uint8_t**)(...)) guarded only by range checks, which
+// SIGSEGV'd whenever a block pointer or entry was stale/unmapped. All FName
+// decoding now goes through the battle-tested MobileDumper-7 core
+// (libMobileDumperCore.a) via the single bridge function MD7_ReadFName(),
+// whose DirectMemory backend validates every read against /proc/self/maps
+// before any memcpy. See src/core/mobile_dumper_bridge.cpp.
+// ============================================================
+extern "C" int MD7_Setup(uintptr_t imageBase);
+extern "C" int MD7_ReadFName(int32_t index, char* outBuf, int bufSize);
 
 std::string InSDKUtils::GetNameByIndex(int32 Index) {
-    const uintptr_t entry = GetNameEntryByIndex(Index);
-    if (!entry) return std::string();
-
-    std::string result;
-    if (!ReadFNameEntryString(entry, result, 0)) return std::string();
-    return result;
+    char Buffer[1024];
+    const int Len = MD7_ReadFName(Index, Buffer, static_cast<int>(sizeof(Buffer)));
+    if (Len <= 0)
+        return std::string();
+    return std::string(Buffer, static_cast<size_t>(Len));
 }
 
 UObject* InSDKUtils::GetObjectByIndex(int32 Index) {

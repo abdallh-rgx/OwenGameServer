@@ -20,6 +20,9 @@
 static FILE* g_logfile = nullptr;
 static std::mutex g_log_mutex;
 
+// MobileDumper-7 FName bridge (src/core/mobile_dumper_bridge.cpp + libMobileDumperCore.a)
+extern "C" int MD7_Setup(uintptr_t imageBase);
+
 static void InitLogFile() {
     const char* paths[] = {
         "/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
@@ -167,6 +170,15 @@ static void MainThread() {
 
     if (!InitImageBase()) { LOGF("[MAIN] InitImageBase FAILED"); return; }
     LOGF("[MAIN] ImageBase=0x%lx", Sarah::ImageBase);
+
+    // MobileDumper-7 FName bridge: must be initialized before any name reads
+    // (InSDKUtils::GetNameByIndex and everything built on it). MD7_ReadFName
+    // also self-bootstraps, but setting up here guarantees correct behaviour
+    // from the very first lookup.
+    {
+        const int md7rc = MD7_Setup(Sarah::ImageBase);
+        LOGF("[MAIN] MD7_Setup -> %d (MobileDumper-7 FName bridge)", md7rc);
+    }
 
     WaitForWorld();
     LOGF("[MAIN] WaitForWorld returned");
