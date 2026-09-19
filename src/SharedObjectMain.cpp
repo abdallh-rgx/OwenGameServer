@@ -32,6 +32,7 @@ static void InitLogFile() {
         FILE* f = fopen(path, "w");
         if (f) {
             g_logfile = f;
+            setvbuf(f, nullptr, _IONBF, 0);
             return;
         }
     }
@@ -50,6 +51,7 @@ static void LOGF(const char* fmt, ...) {
         std::lock_guard<std::mutex> lock(g_log_mutex);
         fprintf(g_logfile, "%s\n", buf);
         fflush(g_logfile);
+        fsync(fileno(g_logfile));
     }
 }
 
@@ -402,97 +404,99 @@ static bool ExecuteOpenCommand(const wchar_t* cmd) {
 }
 
 static void MainThread() {
-    LOGF("[MAIN] MainThread started");
+    LOGF("[CP-1] MainThread ENTER");
 
     std::this_thread::sleep_for(std::chrono::seconds(5));
-    LOGF("[MAIN] Initial delay finished");
+    LOGF("[CP-2] after initial sleep");
 
     if (!InitImageBase()) {
-        LOGF("[MAIN] InitImageBase FAILED");
+        LOGF("[CP-3] InitImageBase FAILED");
         return;
     }
-    LOGF("[MAIN] libUnreal found");
-    LOGF("[MAIN] ImageBase = 0x%lx", Sarah::ImageBase);
+    LOGF("[CP-4] InitImageBase OK ImageBase=0x%lx", Sarah::ImageBase);
 
     WaitForWorld();
+    LOGF("[CP-6] WaitForWorld returned");
 
-    if (!Sarah::InitGObjectsLayout()) {
-        LOGF("[CORE] GObjects layout validation FAILED");
-    } else {
-        LOGF("[CORE] GObjects layout OK");
-        LOGF("[CORE] GObjects Num = %d", Sarah::UObjectManager::Num());
+    bool gObjOk = Sarah::InitGObjectsLayout();
+    LOGF("[CP-8] InitGObjectsLayout returned %d", gObjOk ? 1 : 0);
+
+    if (gObjOk) {
+        LOGF("[CP-9] GObjects Num = %d", Sarah::UObjectManager::Num());
     }
 
-    LOGF("[CORE] Before SetClientOffOnly");
-    LOGF("[CORE] GIsEditor=%d GIsClient=%d GIsServer=%d",
+    LOGF("[CP-10] GIsEditor=%d GIsClient=%d GIsServer=%d",
          GetGIsEditor(), GetGIsClient(), GetGIsServer());
 
     SetClientOffOnly();
+    LOGF("[CP-12] SetClientOffOnly DONE");
 
-    LOGF("[CORE] After SetClientOffOnly (GIsServer untouched)");
-    LOGF("[CORE] GIsEditor=%d GIsClient=%d GIsServer=%d",
+    LOGF("[CP-13] GIsEditor=%d GIsClient=%d GIsServer=%d",
          GetGIsEditor(), GetGIsClient(), GetGIsServer());
 
     srand((uint32_t)time(nullptr));
+    LOGF("[CP-14] srand DONE");
 
-    LOGF("[HOOKS] Caching functions");
     Hooks::CacheFunctions();
+    LOGF("[CP-16] CacheFunctions DONE");
 
-    LOGF("[HOOKS] Installing ProcessEvent");
     DobbyHook((void*)(Sarah::ImageBase + Off::ProcessEvent), (void*)ProcessEventHook, (void**)&ProcessEventOG);
+    LOGF("[CP-18] ProcessEvent hook DONE");
 
-    LOGF("[HOOKS] Installing GetNetMode");
     DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
+    LOGF("[CP-20] GetNetMode hook DONE");
 
-    LOGF("[HOOKS] Installing TickFlush");
     DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
+    LOGF("[CP-22] TickFlush hook DONE");
 
-    LOGF("[HOOKS] Installing ClientOnPawnDied");
     DobbyHook((void*)(Sarah::ImageBase + Off::ClientOnPawnDied), (void*)Player::ClientOnPawnDied, (void**)&Player::ClientOnPawnDiedOG);
+    LOGF("[CP-24] ClientOnPawnDied hook DONE");
 
-    LOGF("[HOOKS] Installing BuildingActor_OnDamageServer");
     DobbyHook((void*)(Sarah::ImageBase + Off::BuildingActor_OnDamageServer), (void*)Building::OnDamageServer, (void**)&Building::BuildingActor_OnDamageServerOG);
+    LOGF("[CP-26] BuildingActor hook DONE");
 
-    LOGF("[HOOKS] Installing PickTeam");
     DobbyHook((void*)(Sarah::ImageBase + Off::PickTeam), (void*)PickTeamHook, (void**)&PickTeamOG);
+    LOGF("[CP-28] PickTeam hook DONE");
 
-    LOGF("[HOOKS] Installing StartAircraftPhase");
     DobbyHook((void*)(Sarah::ImageBase + Off::StartAircraftPhase), (void*)Misc::StartAircraftPhase, (void**)&Misc::StartAircraftPhaseOG);
+    LOGF("[CP-30] StartAircraftPhase hook DONE");
 
-    LOGF("[HOOKS] Installing SpawnDefaultPawnFor");
     DobbyHook((void*)(Sarah::ImageBase + Off::SpawnDefaultPawnFor), (void*)SpawnDefaultPawnForHook, (void**)&SpawnDefaultPawnForOG);
+    LOGF("[CP-32] SpawnDefaultPawnFor hook DONE");
 
     if (bGameSessions) {
-        LOGF("[PATCH] Applying GameSession patch");
         PatchBytes<uint8_t>(Off::GameSessionPatch, 0x85);
-        LOGF("[PATCH] GameSession patch applied");
+        LOGF("[CP-34] GameSession patch DONE");
     }
 
-    LOGF("[CORE] All hooks installed");
+    LOGF("[CP-35] All hooks installed");
 
-    LOGF("[MAP] Requesting map travel to Artemis_Terrain");
+    LOGF("[CP-36] calling ExecuteOpenCommand");
     const wchar_t* cmd = bCreative
         ? L"open Creative_NoApollo_Terrain"
         : L"open Artemis_Terrain";
 
     if (ExecuteOpenCommand(cmd)) {
-        LOGF("[MAP] Map travel requested");
+        LOGF("[CP-37] ExecuteOpenCommand returned TRUE");
     } else {
-        LOGF("[MAP] FAIL: ExecuteConsoleCommand failed");
+        LOGF("[CP-38] ExecuteOpenCommand returned FALSE");
     }
 
-    LOGF("[MAP] Waiting for Artemis_Terrain to load");
+    LOGF("[CP-39] starting 60s sleep");
     std::this_thread::sleep_for(std::chrono::seconds(60));
+    LOGF("[CP-40] 60s sleep DONE");
 
     UWorld* world = UWorld::GetWorld();
     if (world) {
-        LOGF("[MAP] After travel: map=%s", GetWorldMapName(world).c_str());
-        LOGF("[MAP] PersistentLevel=%p", world->PersistentLevel);
-        LOGF("[MAP] AuthorityGameMode=%s",
+        LOGF("[CP-41] After travel: map=%s", GetWorldMapName(world).c_str());
+        LOGF("[CP-42] PersistentLevel=%p", world->PersistentLevel);
+        LOGF("[CP-43] AuthorityGameMode=%s",
              world->AuthorityGameMode ? world->AuthorityGameMode->GetName().c_str() : "null");
+    } else {
+        LOGF("[CP-44] world is null after sleep");
     }
 
-    LOGF("[CORE] MainThread done - engine will handle Listen automatically");
+    LOGF("[CP-45] MainThread DONE");
 }
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
