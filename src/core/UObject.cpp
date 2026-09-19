@@ -2,9 +2,6 @@
 #include "UObject.hpp"
 #include "FName.hpp"
 
-#include <unordered_map>
-#include <mutex>
-
 namespace Sarah {
 
 ProcessEvent_t ProcessEventPtr = nullptr;
@@ -63,98 +60,85 @@ TUObjectArray* InSDKUtils::GetGObjects() {
 
 namespace {
 
-struct FNameToStringParams {
-    int32_t   NameIndex;
-    int32_t   _Padding;
-    char16_t* Data;
-    int32_t   Num;
-    int32_t   Max;
-};
-
-std::mutex                                 g_getname_mutex;
-std::unordered_map<int32_t, std::string>   g_getname_cache;
-UFunction*                                 g_conv_name_to_string_fn = nullptr;
-UObject*                                   g_kismet_string_cdo     = nullptr;
-bool                                       g_conv_init_attempted   = false;
-thread_local bool                          g_in_getname            = false;
-
-bool InitConvNameToString() {
-    if (g_conv_name_to_string_fn && g_kismet_string_cdo) return true;
-    if (g_conv_init_attempted) return false;
-    g_conv_init_attempted = true;
-
-    UClass* cls = (UClass*)Sarah::UObjectManager::Find(L"/Script/Engine.KismetStringLibrary");
-    if (!cls) return false;
-
-    UObject* cdo = cls->ClassDefaultObject;
-    if (!cdo) return false;
-
-    UFunction* fn = (UFunction*)Sarah::UObjectManager::Find(
-        L"/Script/Engine.KismetStringLibrary.Conv_NameToString");
-    if (!fn) return false;
-
-    g_kismet_string_cdo     = cdo;
-    g_conv_name_to_string_fn = fn;
-    return true;
+inline bool IsAddressSane(uintptr_t addr) {
+    return addr >= 0x1000u && addr < 0x0000800000000000ull;
 }
 
-std::string SafeGetNameByIndex(int32 Index) {
-    if (Index < 0) return "";
+std::string DirectGetNameByIndex(int32 Index) {
+    if (Index < 0) return std::string();
+    if (!Sarah::ImageBase) return std::string();
 
-    if (g_in_getname) return "";
-    g_in_getname = true;
+    const uintptr_t poolBase = (uintptr_t)(Sarah::ImageBase + Off::GNames);
+    if (!IsAddressSane(poolBase)) return std::string();
 
-    {
-        std::lock_guard<std::mutex> lock(g_getname_mutex);
-        auto it = g_getname_cache.find(Index);
-        if (it != g_getname_cache.end()) {
-            g_in_getname = false;
-            return it->second;
-        }
-    }
+    const uintptr_t blocksAddr = poolBase + (uintptr_t)Off::FNamePool_Blocks;
+    if (!IsAddressSane(blocksAddr)) return std::string();
+
+    const uint32_t blockIdx = ((uint32_t)Index) >> (uint32_t)Off::FNamePool_BlocksBit;
+    const uint32_t entryIdx = ((uint32_t)Index) & ((1u << (uint32_t)Off::FNamePool_BlocksBit) - 1u);
+
+    if (blockIdx >= 0x2000u) return std::string();
+
+    const uintptr_t blockSlotAddr = blocksAddr + (uintptr_t)blockIdx * sizeof(void*);
+    if (!IsAddressSane(blockSlotAddr)) return std::string();
+
+    const uint8_t* block = *(const uint8_t**)(blockSlotAddr);
+    if (!block) return std::string();
+    if (!IsAddressSane((uintptr_t)block)) return std::string();
+
+    const uint64_t byteOffset = (uint64_t)entryIdx * (uint64_t)Off::FNameEntry_Stride;
+    const uint64_t blockSize  = (uint64_t)Off::FNameEntry_Stride << (uint32_t)Off::FNamePool_BlocksBit;
+    if (byteOffset >= blockSize) return std::string();
+
+    const uint8_t* entryPtr = block + byteOffset;
+
+    const uint16_t header = *(const uint16_t*)(entryPtr + (uintptr_t)Off::FNameEntry_Header);
+    const bool isWide     = (header & (uint16_t)Off::FNameEntry_NameWideMask) != 0;
+    const uint32_t len    = (uint32_t)(header >> (uint32_t)Off::FNameEntry_LengthShift);
+
+    if (len == 0 || len > 1024u) return std::string();
+
+    const uint64_t nameBytes = isWide ? ((uint64_t)len * 2ull) : (uint64_t)len;
+    if ((uint64_t)Off::FNameEntry_String + nameBytes > blockSize - byteOffset)
+        return std::string();
+
+    const uint8_t* nameData = entryPtr + (uintptr_t)Off::FNameEntry_String;
 
     std::string result;
-    if (InitConvNameToString()) {
-        FNameToStringParams parms = {};
-        parms.NameIndex = Index;
+    result.reserve((size_t)len);
 
-        Sarah::CallProcessEvent(g_kismet_string_cdo, g_conv_name_to_string_fn, &parms);
-
-        if (parms.Data && parms.Num > 0) {
-            int32_t len = parms.Num;
-            if (len > 4096) len = 4096;
-            result.reserve((size_t)len);
-            const char16_t* w = parms.Data;
-            for (int32_t i = 0; i < len; i++) {
-                char16_t c = w[i];
-                if (c == 0) break;
-                if (c < 0x80) {
-                    result.push_back((char)c);
-                } else if (c < 0x800) {
-                    result.push_back((char)(0xC0 | (c >> 6)));
-                    result.push_back((char)(0x80 | (c & 0x3F)));
-                } else {
-                    result.push_back((char)(0xE0 | (c >> 12)));
-                    result.push_back((char)(0x80 | ((c >> 6) & 0x3F)));
-                    result.push_back((char)(0x80 | (c & 0x3F)));
-                }
+    if (isWide) {
+        const char16_t* w = (const char16_t*)nameData;
+        for (uint32_t i = 0; i < len; i++) {
+            const char16_t c = w[i];
+            if (c == 0) break;
+            if (c < 0x80) {
+                result.push_back((char)c);
+            } else if (c < 0x800) {
+                result.push_back((char)(0xC0 | (c >> 6)));
+                result.push_back((char)(0x80 | (c & 0x3F)));
+            } else {
+                result.push_back((char)(0xE0 | (c >> 12)));
+                result.push_back((char)(0x80 | ((c >> 6) & 0x3F)));
+                result.push_back((char)(0x80 | (c & 0x3F)));
             }
+        }
+    } else {
+        const char* n = (const char*)nameData;
+        for (uint32_t i = 0; i < len; i++) {
+            const char c = n[i];
+            if (c == 0) break;
+            result.push_back(c);
         }
     }
 
-    {
-        std::lock_guard<std::mutex> lock(g_getname_mutex);
-        g_getname_cache[Index] = result;
-    }
-
-    g_in_getname = false;
     return result;
 }
 
 }
 
 std::string InSDKUtils::GetNameByIndex(int32 Index) {
-    return SafeGetNameByIndex(Index);
+    return DirectGetNameByIndex(Index);
 }
 
 UObject* InSDKUtils::GetObjectByIndex(int32 Index) {
