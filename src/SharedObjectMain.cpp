@@ -326,19 +326,31 @@ static APawn* SpawnDefaultPawnForHook(AGameModeBase* gameMode, AController* newP
 
 static void WaitForWorld() {
     LOGF("[CORE] Waiting for World");
-    for (int i = 0; i < 120; i++) {
-        if (UWorld::GetWorld() && UEngine::GetEngine()) {
-            LOGF("[CORE] World and Engine ready");
+    for (int i = 0; i < 300; i++) {
+        void* rawWorld = *(void**)(Sarah::ImageBase + Off::GWorld);
+        void* rawEngine = *(void**)(Sarah::ImageBase + Off::GEngine);
+
+        if ((i % 20) == 0) {
+            LOGF("[CORE] iter %d (~%ds): rawWorld=%p rawEngine=%p", i, i / 2, rawWorld, rawEngine);
+        }
+
+        if (rawWorld && rawEngine) {
+            LOGF("[CORE] World and Engine ready at iter %d (~%ds)", i, i / 2);
             return;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
-    LOGF("[CORE] World wait timeout");
+    LOGF("[CORE] World wait timeout after 150s");
 }
 
 static bool ExecuteOpenCommand(const wchar_t* cmd) {
     UWorld* world = UWorld::GetWorld();
-    if (!world) return false;
+    if (!world) {
+        LOGF("[MAP] FAIL: world is null");
+        return false;
+    }
+
+    LOGF("[MAP] Current map before travel: %s", world->GetMapName().c_str());
 
     static char16_t cmdBuf[512];
     int len = 0;
@@ -364,8 +376,13 @@ static bool ExecuteOpenCommand(const wchar_t* cmd) {
     UClass* kslClass = (UClass*)Utils::FindObject(
         L"/Script/Engine.KismetSystemLibrary");
 
-    if (!execFn || !kslClass || !kslClass->ClassDefaultObject)
+    LOGF("[MAP] execFn=%p kslClass=%p CDO=%p",
+         execFn, kslClass, kslClass ? kslClass->ClassDefaultObject : nullptr);
+
+    if (!execFn || !kslClass || !kslClass->ClassDefaultObject) {
+        LOGF("[MAP] FAIL: ExecuteConsoleCommand not available");
         return false;
+    }
 
     ExecCmdParams parms = {};
     parms.WorldContextObject = world;
@@ -447,8 +464,10 @@ static void MainThread() {
 
     LOGF("[CORE] All hooks installed");
 
-    LOGF("[MAP] Starting map travel");
+    LOGF("[MAP] Waiting for Frontend to finish loading");
+    std::this_thread::sleep_for(std::chrono::seconds(30));
 
+    LOGF("[MAP] Requesting map travel to Artemis_Terrain");
     const wchar_t* cmd = bCreative
         ? L"open Creative_NoApollo_Terrain"
         : L"open Artemis_Terrain";
@@ -456,21 +475,21 @@ static void MainThread() {
     if (ExecuteOpenCommand(cmd)) {
         LOGF("[MAP] Map travel requested");
     } else {
-        LOGF("[MAP] FAIL: ExecuteConsoleCommand not found");
+        LOGF("[MAP] FAIL: ExecuteConsoleCommand failed");
     }
 
-    LOGF("[MAP] Waiting for map to load");
-    std::this_thread::sleep_for(std::chrono::seconds(20));
-    LOGF("[MAP] Map load wait finished");
+    LOGF("[MAP] Waiting for Artemis_Terrain to load");
+    std::this_thread::sleep_for(std::chrono::seconds(60));
 
-    LOGF("[CORE] Starting Listen");
-    if (Misc::Listen()) {
-        LOGF("[CORE] Server is listening");
-    } else {
-        LOGF("[CORE] Listen FAILED");
+    UWorld* world = UWorld::GetWorld();
+    if (world) {
+        LOGF("[MAP] After travel: map=%s", world->GetMapName().c_str());
+        LOGF("[MAP] PersistentLevel=%p", world->PersistentLevel);
+        LOGF("[MAP] AuthorityGameMode=%s",
+             world->AuthorityGameMode ? world->AuthorityGameMode->GetName().c_str() : "null");
     }
 
-    LOGF("[CORE] MainThread done");
+    LOGF("[CORE] MainThread done - engine will handle Listen automatically");
 }
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
