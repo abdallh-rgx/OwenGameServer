@@ -64,45 +64,69 @@ inline bool IsAddressSane(uintptr_t addr) {
     return addr >= 0x1000u && addr < 0x0000800000000000ull;
 }
 
-std::string DirectGetNameByIndex(int32 Index) {
-    if (Index < 0) return std::string();
-    if (!Sarah::ImageBase) return std::string();
+uintptr_t GetNameEntryByIndex(int32 Index, int Depth) {
+    if (Depth > 4) return 0;
+    if (Index < 0) return 0;
+    if (!Sarah::ImageBase) return 0;
 
     const uintptr_t poolBase = (uintptr_t)(Sarah::ImageBase + Off::GNames);
-    if (!IsAddressSane(poolBase)) return std::string();
+    if (!IsAddressSane(poolBase)) return 0;
 
     const uintptr_t blocksAddr = poolBase + (uintptr_t)Off::FNamePool_Blocks;
-    if (!IsAddressSane(blocksAddr)) return std::string();
+    if (!IsAddressSane(blocksAddr)) return 0;
 
     const uint32_t blockIdx = ((uint32_t)Index) >> (uint32_t)Off::FNamePool_BlocksBit;
     const uint32_t entryIdx = ((uint32_t)Index) & ((1u << (uint32_t)Off::FNamePool_BlocksBit) - 1u);
 
-    if (blockIdx >= 0x2000u) return std::string();
+    if (blockIdx >= 0x2000u) return 0;
 
     const uintptr_t blockSlotAddr = blocksAddr + (uintptr_t)blockIdx * sizeof(void*);
-    if (!IsAddressSane(blockSlotAddr)) return std::string();
+    if (!IsAddressSane(blockSlotAddr)) return 0;
 
     const uint8_t* block = *(const uint8_t**)(blockSlotAddr);
-    if (!block) return std::string();
-    if (!IsAddressSane((uintptr_t)block)) return std::string();
+    if (!block) return 0;
+    if (!IsAddressSane((uintptr_t)block)) return 0;
 
     const uint64_t byteOffset = (uint64_t)entryIdx * (uint64_t)Off::FNameEntry_Stride;
     const uint64_t blockSize  = (uint64_t)Off::FNameEntry_Stride << (uint32_t)Off::FNamePool_BlocksBit;
-    if (byteOffset >= blockSize) return std::string();
+    if (byteOffset >= blockSize) return 0;
 
-    const uint8_t* entryPtr = block + byteOffset;
+    return (uintptr_t)(block + byteOffset);
+}
+
+bool ReadFNameEntryString(uintptr_t entryPtr, std::string& outResult, int Depth) {
+    if (Depth > 4) return false;
+    if (!IsAddressSane(entryPtr)) return false;
 
     const uint16_t header = *(const uint16_t*)(entryPtr + (uintptr_t)Off::FNameEntry_Header);
     const bool isWide     = (header & (uint16_t)Off::FNameEntry_NameWideMask) != 0;
     const uint32_t len    = (uint32_t)(header >> (uint32_t)Off::FNameEntry_LengthShift);
 
-    if (len == 0 || len > 1024u) return std::string();
+    if (len == 0) {
+        const uintptr_t idFieldOffset = entryPtr + (uintptr_t)Off::FNameEntry_String;
+        const int32_t nextEntryIndex  = *(const int32_t*)(idFieldOffset);
+        const int32_t strNumber       = *(const int32_t*)(idFieldOffset + 4);
+
+        if (nextEntryIndex < 0 || strNumber <= 0) return false;
+
+        const uintptr_t baseEntry = GetNameEntryByIndex(nextEntryIndex, Depth + 1);
+        if (!baseEntry) return false;
+
+        std::string baseName;
+        if (!ReadFNameEntryString(baseEntry, baseName, Depth + 1)) return false;
+
+        outResult = baseName;
+        outResult += '_';
+        outResult += std::to_string((uint32_t)strNumber - 1u);
+        return true;
+    }
+
+    if (len > 1024u) return false;
 
     const uint64_t nameBytes = isWide ? ((uint64_t)len * 2ull) : (uint64_t)len;
-    if ((uint64_t)Off::FNameEntry_String + nameBytes > blockSize - byteOffset)
-        return std::string();
+    if (!IsAddressSane(entryPtr + (uintptr_t)Off::FNameEntry_String + nameBytes)) return false;
 
-    const uint8_t* nameData = entryPtr + (uintptr_t)Off::FNameEntry_String;
+    const uint8_t* nameData = (const uint8_t*)(entryPtr + (uintptr_t)Off::FNameEntry_String);
 
     std::string result;
     result.reserve((size_t)len);
@@ -132,13 +156,19 @@ std::string DirectGetNameByIndex(int32 Index) {
         }
     }
 
-    return result;
+    outResult = std::move(result);
+    return true;
 }
 
 }
 
 std::string InSDKUtils::GetNameByIndex(int32 Index) {
-    return DirectGetNameByIndex(Index);
+    const uintptr_t entry = GetNameEntryByIndex(Index, 0);
+    if (!entry) return std::string();
+
+    std::string result;
+    if (!ReadFNameEntryString(entry, result, 0)) return std::string();
+    return result;
 }
 
 UObject* InSDKUtils::GetObjectByIndex(int32 Index) {
