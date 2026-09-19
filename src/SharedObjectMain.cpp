@@ -324,6 +324,12 @@ static APawn* SpawnDefaultPawnForHook(AGameModeBase* gameMode, AController* newP
     return nullptr;
 }
 
+static std::string GetWorldMapName(UWorld* world) {
+    if (!world) return "null";
+    if (!world->PersistentLevel) return "no-persistent-level";
+    return world->PersistentLevel->GetName();
+}
+
 static void WaitForWorld() {
     LOGF("[CORE] Waiting for World");
     for (int i = 0; i < 300; i++) {
@@ -350,12 +356,8 @@ static bool ExecuteOpenCommand(const wchar_t* cmd) {
         return false;
     }
 
-    std::string mapName = "unknown";
-if (world->PersistentLevel) {
-    mapName = world->PersistentLevel->GetName();
-}
-LOGF("[MAP] Current map before travel: %s", mapName.c_str());
-    
+    LOGF("[MAP] Current map before travel: %s", GetWorldMapName(world).c_str());
+
     static char16_t cmdBuf[512];
     int len = 0;
     for (const wchar_t* p = cmd; *p && len < 500; p++) {
@@ -482,16 +484,12 @@ static void MainThread() {
         LOGF("[MAP] FAIL: ExecuteConsoleCommand failed");
     }
 
-    std::string mapName = "unknown";
-if (world->PersistentLevel) {
-    mapName = world->PersistentLevel->GetName();
-}
-LOGF("[MAP] After travel: map=%s", mapName.c_str());
+    LOGF("[MAP] Waiting for Artemis_Terrain to load");
     std::this_thread::sleep_for(std::chrono::seconds(60));
 
     UWorld* world = UWorld::GetWorld();
     if (world) {
-        LOGF("[MAP] After travel: map=%s", world->GetMapName().c_str());
+        LOGF("[MAP] After travel: map=%s", GetWorldMapName(world).c_str());
         LOGF("[MAP] PersistentLevel=%p", world->PersistentLevel);
         LOGF("[MAP] AuthorityGameMode=%s",
              world->AuthorityGameMode ? world->AuthorityGameMode->GetName().c_str() : "null");
