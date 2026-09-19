@@ -58,42 +58,46 @@ TUObjectArray* InSDKUtils::GetGObjects() {
     return reinterpret_cast<TUObjectArray*>(Sarah::ImageBase + Off::GObjects);
 }
 
-static std::string DirectGetNameByIndex(int32 Index) {
-    if (Index < 0) return "";
+std::string InSDKUtils::GetNameByIndex(int32 Index) {
+    if (Index < 0)
+        return "";
 
     uint8_t* poolBase = (uint8_t*)(Sarah::ImageBase + Off::GNames);
-    if (!poolBase) return "";
+    if (!poolBase)
+        return "";
 
-    uint8_t** blocks = *(uint8_t***)(poolBase + Off::FNamePool_Blocks);
-    if (!blocks) return "";
+    uint8_t** blocks = (uint8_t**)(poolBase + Off::FNamePool_Blocks);
 
-    uint32_t blockIdx = ((uint32_t)Index) >> 16;
-    uint32_t offsetInBlock = ((uint32_t)Index) & 0xFFFF;
+    const uint32_t blockIdx = ((uint32_t)Index) >> Off::FNamePool_BlocksBit;
+    const uint32_t entryIdx = ((uint32_t)Index) & ((1u << Off::FNamePool_BlocksBit) - 1u);
 
-    if (blockIdx >= 0x2000) return "";
+    if (blockIdx >= Off::FNameMaxBlocks)
+        return "";
 
     uint8_t* block = blocks[blockIdx];
-    if (!block) return "";
+    if (!block)
+        return "";
 
-    uint8_t* entryPtr = block + (uint64_t)offsetInBlock * Off::FNameEntry_Stride;
-    if (!entryPtr) return "";
+    uint8_t* entryPtr = block + (uint64_t)entryIdx * (uint64_t)Off::FNameEntry_Stride;
 
     uint16_t header = *(uint16_t*)(entryPtr + Off::FNameEntry_Header);
-    bool isWide = (header & Off::FNameEntry_NameWideMask) != 0;
-    uint32_t len = header >> Off::FNameEntry_LengthShift;
 
-    if (len == 0 || len > 1024) return "";
+    const bool isWide = (header & Off::FNameEntry_NameWideMask) != 0;
+    const uint32_t len = (uint32_t)(header >> Off::FNameEntry_LengthShift);
+
+    if (len == 0 || len > 1024)
+        return "";
 
     uint8_t* nameData = entryPtr + Off::FNameEntry_String;
+
     std::string result;
     result.reserve(len);
 
     if (isWide) {
-        char16_t* name = (char16_t*)nameData;
+        const char16_t* w = reinterpret_cast<const char16_t*>(nameData);
         for (uint32_t i = 0; i < len; i++) {
-            char16_t c = name[i];
+            char16_t c = w[i];
             if (c == 0) break;
-
             if (c < 0x80) {
                 result.push_back((char)c);
             } else if (c < 0x800) {
@@ -106,19 +110,15 @@ static std::string DirectGetNameByIndex(int32 Index) {
             }
         }
     } else {
-        char* name = (char*)nameData;
+        const char* n = reinterpret_cast<const char*>(nameData);
         for (uint32_t i = 0; i < len; i++) {
-            char c = name[i];
+            char c = n[i];
             if (c == 0) break;
             result.push_back(c);
         }
     }
 
     return result;
-}
-
-std::string InSDKUtils::GetNameByIndex(int32 Index) {
-    return DirectGetNameByIndex(Index);
 }
 
 UObject* InSDKUtils::GetObjectByIndex(int32 Index) {
