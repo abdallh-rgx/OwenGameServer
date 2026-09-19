@@ -24,8 +24,8 @@ static void MLOG(const char* fmt, ...) {
 
     if (!g_miscLog) {
         const char* paths[] = {
-            "/storage/emulated/0/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
-            "/sdcard/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
+            "/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+            "/sdcard/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
         };
         for (auto p : paths) {
             g_miscLog = fopen(p, "a");
@@ -151,14 +151,11 @@ bool Misc::StartAircraftPhase(AFortGameModeAthena* gameMode, char a2) {
 
 bool Misc::Listen() {
     MLOG("[Listen] === Starting Listen ===");
-    MLOG("[Listen] GIsClient=%d GIsServer=%d (already dedicated)",
-         GetGIsClient(), GetGIsServer());
 
-    UWorld* world = *(UWorld**)(Sarah::ImageBase + Off::GWorld);
-    MLOG("[Listen] B world=%p", world);
+    UWorld* world = UWorld::GetWorld();
+    UEngine* engine = UEngine::GetEngine();
 
-    UEngine* engine = *(UEngine**)(Sarah::ImageBase + Off::GEngine);
-    MLOG("[Listen] D engine=%p", engine);
+    MLOG("[Listen] world=%p engine=%p", world, engine);
 
     if (!world || !engine) {
         MLOG("[Listen] FAIL: world or engine null");
@@ -173,7 +170,7 @@ bool Misc::Listen() {
     using GetWorldCtx_t = void* (*)(void*, void*);
     GetWorldCtx_t getWorldCtx = (GetWorldCtx_t)(Sarah::ImageBase + Off::GetWorldContext);
     void* worldCtx = getWorldCtx(engine, world);
-    MLOG("[Listen] H worldCtx=%p", worldCtx);
+    MLOG("[Listen] worldCtx=%p", worldCtx);
 
     if (!worldCtx) {
         MLOG("[Listen] FAIL: worldCtx null");
@@ -185,24 +182,15 @@ bool Misc::Listen() {
     int32_t* pNum = (int32_t*)(engBase + 0xC48);
     int32_t* pMax = (int32_t*)(engBase + 0xC4C);
 
-    MLOG("[Listen] J NetDriverDefinitions: Data=%p Num=%d Max=%d", *pData, *pNum, *pMax);
+    MLOG("[Listen] NetDriverDefinitions: Data=%p Num=%d Max=%d", *pData, *pNum, *pMax);
 
     if (!*pData || *pNum <= 0) {
         MLOG("[Listen] FAIL: NetDriverDefinitions empty");
         return false;
     }
 
-    MLOG("[Listen] J1 Existing entries:");
-    for (int i = 0; i < *pNum && i < 8; i++) {
-        FNetDriverDefLocal& e = (*pData)[i];
-        MLOG("[Listen]   [%d] DefName=0x%08x DriverClass=0x%08x Fallback=0x%08x MaxCh=%d",
-             i, e.DefName.Index, e.DriverClassName.Index,
-             e.DriverClassNameFallback.Index, e.MaxChannelsOverride);
-    }
-
     using CreateND_t = void* (*)(void*, void*, FName);
     CreateND_t createND = (CreateND_t)(Sarah::ImageBase + Off::CreateNetDriver);
-    MLOG("[Listen] J2 CreateNetDriver fn=%p", (void*)createND);
 
     void* netDriver = nullptr;
     int successEntry = -1;
@@ -213,35 +201,29 @@ bool Misc::Listen() {
         FName testName{};
         testName.ComparisonIndex = e.DefName.Index;
 
-        MLOG("[Listen] try[%d] DefName=0x%x", i, e.DefName.Index);
         void* nd = createND(engine, worldCtx, testName);
-        MLOG("[Listen]   -> %p", nd);
+        MLOG("[Listen] try[%d] DefName=0x%x -> %p", i, e.DefName.Index, nd);
 
         if (nd) {
             netDriver = nd;
             successEntry = i;
-            MLOG("[Listen] SUCCESS with entry[%d]", i);
             break;
         }
     }
-
-    MLOG("[Listen] K netDriver=%p entry=%d", netDriver, successEntry);
 
     if (!netDriver) {
         MLOG("[Listen] FAIL: no entry produced a NetDriver");
         return false;
     }
 
-    MLOG("[Listen] === Setting up world->NetDriver ===");
+    MLOG("[Listen] netDriver=%p entry=%d", netDriver, successEntry);
+
     world->NetDriver = (UNetDriver*)netDriver;
-    MLOG("[Listen] world->NetDriver = %p", world->NetDriver);
 
     for (int i = 0; i < world->LevelCollections.Num(); i++) {
         world->LevelCollections[i].NetDriver = (UNetDriver*)netDriver;
     }
-    MLOG("[Listen] LevelCollections updated (%d)", world->LevelCollections.Num());
 
-    MLOG("[Listen] === Building FURL ===");
     static char16_t hostBuf[] = u"0.0.0.0";
     static char16_t protoBuf[] = u"unreal";
     static char16_t emptyBuf[] = u"";
@@ -274,8 +256,6 @@ bool Misc::Listen() {
     url.Portal.Num = 0;
     url.Portal.Max = 1;
 
-    MLOG("[Listen] URL: host='0.0.0.0' port=%d", url.Port);
-
     static char16_t errBuf[512] = {};
     FStringLocal errStr = {};
     errStr.Data = errBuf;
@@ -284,12 +264,9 @@ bool Misc::Listen() {
 
     using InitListen_t = bool (*)(void*, void*, FURLLocal*, bool, FStringLocal*);
     InitListen_t initListen = (InitListen_t)(Sarah::ImageBase + Off::InitListen);
-    MLOG("[Listen] InitListen fn=%p", (void*)initListen);
-
-    MLOG("[Listen] M about to call InitListen(worldCtx=%p, &err)...", worldCtx);
 
     bool listenOk = initListen(netDriver, worldCtx, &url, false, &errStr);
-    MLOG("[Listen] N InitListen returned %d", (int)listenOk);
+    MLOG("[Listen] InitListen returned %d", (int)listenOk);
 
     if (!listenOk) {
         MLOG("[Listen] FAIL: InitListen returned false, errLen=%d", errStr.Num);
