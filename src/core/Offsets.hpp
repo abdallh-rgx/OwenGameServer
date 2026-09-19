@@ -89,6 +89,12 @@ constexpr uint64_t EvaluateCurveTableRow    = 0x9A73B60;
 
 constexpr uint32_t FNamePool_Blocks         = 0x0040;
 constexpr uint32_t FNamePool_ByteCursor     = 0x003C;
-constexpr uint32_t FNameEntry_Stride        = 0x0002;
+constexpr uint32_t FNamePool_BlocksBit      = 0x0010;
+
+constexpr uint32_t FNameEntry_Stride        = 0x0004;
+constexpr uint32_t FNameEntry_Header        = 0x0000;
+constexpr uint32_t FNameEntry_String        = 0x0004;
+constexpr uint32_t FNameEntry_NameWideMask  = 0x0001;
+constexpr uint32_t FNameEntry_LengthShift   = 0x0006;
 
 }
