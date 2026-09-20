@@ -6,6 +6,7 @@
 #include "UObject.hpp"
 #include "FName.hpp"
 
+
 bool Building::CanBePlacedByPlayer(UClass* buildClass) {
     auto gameState = (AFortGameStateAthena*)UWorld::GetWorld()->GameState;
     if (!gameState) return false;
@@ -13,9 +14,12 @@ bool Building::CanBePlacedByPlayer(UClass* buildClass) {
 }
 
 static void SetEditingPlayer(ABuildingSMActor* building, AFortPlayerStateZone* newEditingPlayer) {
-    if (building->Role != EENetRole::ROLE_Authority || (building->EditingPlayer && newEditingPlayer)) return;
+    if (building->Role != EENetRole::ROLE_Authority || (building->EditingPlayer && newEditingPlayer))
+        return;
+
     building->SetNetDormancy(EENetDormancy((2 - (newEditingPlayer != 0))));
     building->ForceNetUpdate();
+
     if (building->EditingPlayer) {
         auto handle = building->EditingPlayer->Owner;
         if (auto playerController = CastSDK<AFortPlayerController>(handle)) {
@@ -26,322 +30,359 @@ static void SetEditingPlayer(ABuildingSMActor* building, AFortPlayerStateZone* n
     }
 }
 
-static EEFortBuildingType GetBuildingTypeFromBuildingAttachmentType(EEBuildingAttachmentType buildingAttachmentType) {
-    if (uint8_t(buildingAttachmentType) <= 7) {
-        uint32_t val = 0xC5;
-        if (val & (1u << uint8_t(buildingAttachmentType))) return EEFortBuildingType::Floor;
-    }
-    if (buildingAttachmentType == EEBuildingAttachmentType::ATTACH_Wall) return EEFortBuildingType::Wall;
-    return EEFortBuildingType::None;
-}
+void Building::ServerCreateBuildingActor(UObject* context, Params::AFortPlayerController_ServerCreateBuildingActor* params) {
+    auto playerController = (AFortPlayerController*)context;
+    if (!playerController)
+        return;
 
-void Building::ServerCreateBuildingActorHook(UObject* Context, FFrame& Stack) {
-    STACK_SAVE(Stack, _saved);
-    FCreateBuildingActorData CreateBuildingData;
-    Stack.StepCompiledIn(&CreateBuildingData);
-    Stack.IncrementCode();
-
-    auto playerController = (AFortPlayerController*)Context;
-    if (!playerController) { CALL_OG_VOID(Stack, Context, ServerCreateBuildingActorOG, _saved); return; }
+    auto& createBuildingData = params->CreateBuildingData;
 
     auto gameState = (AFortGameStateAthena*)UWorld::GetWorld()->GameState;
-    if (!gameState) { CALL_OG_VOID(Stack, Context, ServerCreateBuildingActorOG, _saved); return; }
+    if (!gameState) return;
 
     UClass* buildingClass = nullptr;
     auto found = gameState->AllPlayerBuildableClassesIndexLookup.SearchForKey([&](UClass* cls, int32_t handle) {
-        return handle == CreateBuildingData.BuildingClassHandle;
+        return handle == createBuildingData.BuildingClassHandle;
     });
-    if (found) buildingClass = found->Key();
-    if (!buildingClass) { CALL_OG_VOID(Stack, Context, ServerCreateBuildingActorOG, _saved); return; }
+    if (found)
+        buildingClass = found->Key();
+
+    if (!buildingClass)
+        return;
 
     auto smDefault = (ABuildingSMActor*)buildingClass->ClassDefaultObject;
-    if (!smDefault) { CALL_OG_VOID(Stack, Context, ServerCreateBuildingActorOG, _saved); return; }
+    if (!smDefault) return;
 
     auto resource = UFortKismetLibrary::K2_GetResourceItemDefinition(smDefault->ResourceType);
 
     FFortItemEntry* itemEntry = nullptr;
     if (!playerController->bBuildFree) {
-        itemEntry = playerController->WorldInventory->Inventory.ReplicatedEntries.Search([&](FFortItemEntry& entry) { return entry.ItemDefinition == resource; });
+        itemEntry = playerController->WorldInventory->Inventory.ReplicatedEntries.Search([&](FFortItemEntry& entry) {
+            return entry.ItemDefinition == resource;
+        });
         if (!itemEntry || itemEntry->Count < 10) {
             playerController->ClientSendMessage(UKismetTextLibrary::Conv_StringToText(Utils::ToFString(L"Not enough resources to build! Change building material or gather more!")), nullptr);
             playerController->ClientTriggerUIFeedbackEvent(MakeFName(L"BuildPreviewUnableToAfford"));
-            CALL_OG_VOID(Stack, Context, ServerCreateBuildingActorOG, _saved);
             return;
         }
     }
 
-    ABuildingSMActor* building = Utils::SpawnActor<ABuildingSMActor>(buildingClass, CreateBuildingData.BuildLoc, CreateBuildingData.BuildRot, playerController);
-    if (!building) { CALL_OG_VOID(Stack, Context, ServerCreateBuildingActorOG, _saved); return; }
+    ABuildingSMActor* building = Utils::SpawnActor<ABuildingSMActor>(buildingClass, createBuildingData.BuildLoc, createBuildingData.BuildRot, playerController);
+    if (!building)
+        return;
 
-    building->CurrentBuildingLevel = CreateBuildingData.BuildingClassData.UpgradeLevel;
+    building->CurrentBuildingLevel = createBuildingData.BuildingClassData.UpgradeLevel;
     building->OnRep_CurrentBuildingLevel();
-    building->SetMirrored(CreateBuildingData.bMirrored);
+    building->SetMirrored(createBuildingData.bMirrored);
     building->bPlayerPlaced = true;
     building->InitializeKismetSpawnedBuildingActor(building, playerController, true, nullptr);
 
     if (!playerController->bBuildFree && itemEntry) {
         itemEntry->Count -= 10;
-        if (itemEntry->Count <= 0) Inventory::Remove(playerController, itemEntry->ItemGuid);
-        else Inventory::ReplaceEntry(playerController, *itemEntry);
+        if (itemEntry->Count <= 0)
+            Inventory::Remove(playerController, itemEntry->ItemGuid);
+        else
+            Inventory::ReplaceEntry(playerController, *itemEntry);
     }
 
     building->TeamIndex = ((AFortPlayerStateAthena*)playerController->PlayerState)->TeamIndex;
     building->Team = (EEFortTeam)building->TeamIndex;
-
-    CALL_OG_VOID(Stack, Context, ServerCreateBuildingActorOG, _saved);
 }
 
-void Building::ServerBeginEditingBuildingActorHook(UObject* Context, FFrame& Stack) {
-    STACK_SAVE(Stack, _saved);
-    ABuildingSMActor* building = nullptr;
-    Stack.StepCompiledIn(&building);
-    Stack.IncrementCode();
+void Building::ServerBeginEditingBuildingActor(UObject* context, Params::AFortPlayerController_ServerBeginEditingBuildingActor* params) {
+    auto playerController = (AFortPlayerController*)context;
+    auto building = params->BuildingActorToEdit;
 
-    auto playerController = (AFortPlayerController*)Context;
-    if (!playerController || !playerController->MyFortPawn || !building) { CALL_OG_VOID(Stack, Context, ServerBeginEditingBuildingActorOG, _saved); return; }
+    if (!playerController || !playerController->MyFortPawn || !building)
+        return;
 
     auto playerState = (AFortPlayerStateAthena*)playerController->PlayerState;
-    if (!playerState || building->TeamIndex != playerState->TeamIndex) { CALL_OG_VOID(Stack, Context, ServerBeginEditingBuildingActorOG, _saved); return; }
+    if (!playerState || building->TeamIndex != playerState->TeamIndex)
+        return;
 
     SetEditingPlayer(building, playerState);
 
     auto editToolEntry = playerController->WorldInventory->Inventory.ReplicatedEntries.Search([&](FFortItemEntry& entry) {
         return entry.ItemDefinition && entry.ItemDefinition->IsA(UFortEditToolItemDefinition::StaticClass());
     });
-    if (!editToolEntry) { CALL_OG_VOID(Stack, Context, ServerBeginEditingBuildingActorOG, _saved); return; }
+    if (!editToolEntry) return;
 
     playerController->MyFortPawn->EquipWeaponDefinition((UFortWeaponItemDefinition*)editToolEntry->ItemDefinition, editToolEntry->ItemGuid, editToolEntry->TrackerGuid, false);
 
-    auto editTool = CastSDK<AFortWeap_EditingTool>(playerController->MyFortPawn->CurrentWeapon);
-    if (editTool) {
+    if (auto editTool = CastSDK<AFortWeap_EditingTool>(playerController->MyFortPawn->CurrentWeapon)) {
         editTool->EditActor = building;
         editTool->OnRep_EditActor();
     }
-
-    CALL_OG_VOID(Stack, Context, ServerBeginEditingBuildingActorOG, _saved);
 }
 
-void Building::ServerEditBuildingActorHook(UObject* Context, FFrame& Stack) {
-    STACK_SAVE(Stack, _saved);
-    ABuildingSMActor* building = nullptr;
-    TSubclassOf<ABuildingSMActor> NewClass;
-    uint8 RotationIterations = 0;
-    bool bMirrored = false;
-    Stack.StepCompiledIn(&building);
-    Stack.StepCompiledIn(&NewClass);
-    Stack.StepCompiledIn(&RotationIterations);
-    Stack.StepCompiledIn(&bMirrored);
-    Stack.IncrementCode();
+void Building::ServerEditBuildingActor(UObject* context, Params::AFortPlayerController_ServerEditBuildingActor* params) {
+    auto playerController = (AFortPlayerController*)context;
+    auto building = params->BuildingActorToEdit;
+    auto newClass = params->NewBuildingClass;
+    auto rotationIterations = params->RotationIterations;
+    auto bMirrored = params->bMirrored;
 
-    auto playerController = (AFortPlayerController*)Context;
-    if (!playerController || !building || !NewClass || !CanBePlacedByPlayer(NewClass)) { CALL_OG_VOID(Stack, Context, ServerEditBuildingActorOG, _saved); return; }
+    if (!playerController || !building || !newClass || !CanBePlacedByPlayer(newClass))
+        return;
 
     auto playerState = (AFortPlayerStateAthena*)playerController->PlayerState;
-    if (!playerState || building->TeamIndex != playerState->TeamIndex || building->bDestroyed) { CALL_OG_VOID(Stack, Context, ServerEditBuildingActorOG, _saved); return; }
+    if (!playerState || building->TeamIndex != playerState->TeamIndex || building->bDestroyed)
+        return;
+
+    if (!building->IsA(ABuildingSMActor::StaticClass()))
+        return;
 
     SetEditingPlayer(building, nullptr);
 
-    using Replace_t = ABuildingSMActor* (*)(ABuildingSMActor*, unsigned int, UObject*, unsigned int, int, bool, AFortPlayerController*);
-    static Replace_t replaceBuildingActor = nullptr;
-    if (!replaceBuildingActor) replaceBuildingActor = (Replace_t)(Sarah::ImageBase + Off::ReplaceBuildingActor);
+    using ReplaceBuildingActor_t = ABuildingSMActor* (*)(ABuildingSMActor*, unsigned int, UObject*, unsigned int, int, bool, AFortPlayerController*);
+    static ReplaceBuildingActor_t replaceBuildingActor = nullptr;
+    if (!replaceBuildingActor)
+        replaceBuildingActor = (ReplaceBuildingActor_t)(Sarah::ImageBase + Off::ReplaceBuildingActor);
 
-    ABuildingSMActor* newBuild = replaceBuildingActor(building, 1, NewClass, building->CurrentBuildingLevel, RotationIterations, bMirrored, playerController);
-    if (newBuild) newBuild->bPlayerPlaced = true;
+    ABuildingSMActor* newBuild = replaceBuildingActor(building, 1, newClass, building->CurrentBuildingLevel, rotationIterations, bMirrored, playerController);
 
-    CALL_OG_VOID(Stack, Context, ServerEditBuildingActorOG, _saved);
+    if (newBuild)
+        newBuild->bPlayerPlaced = true;
 }
 
-void Building::ServerEndEditingBuildingActorHook(UObject* Context, FFrame& Stack) {
-    STACK_SAVE(Stack, _saved);
-    ABuildingSMActor* building = nullptr;
-    Stack.StepCompiledIn(&building);
-    Stack.IncrementCode();
+void Building::ServerEndEditingBuildingActor(UObject* context, Params::AFortPlayerController_ServerEndEditingBuildingActor* params) {
+    auto playerController = (AFortPlayerController*)context;
+    auto building = params->BuildingActorToStopEditing;
 
-    auto playerController = (AFortPlayerController*)Context;
-    if (!playerController || !playerController->MyFortPawn || !building) { CALL_OG_VOID(Stack, Context, ServerEndEditingBuildingActorOG, _saved); return; }
+    if (!playerController || !playerController->MyFortPawn || !building)
+        return;
 
     auto playerState = (AFortPlayerStateAthena*)playerController->PlayerState;
-    if (!playerState || building->EditingPlayer != playerState || building->TeamIndex != playerState->TeamIndex || building->bDestroyed) { CALL_OG_VOID(Stack, Context, ServerEndEditingBuildingActorOG, _saved); return; }
+    if (!playerState || building->EditingPlayer != playerState || building->TeamIndex != playerState->TeamIndex || building->bDestroyed)
+        return;
 
     SetEditingPlayer(building, nullptr);
 
     auto editToolEntry = playerController->WorldInventory->Inventory.ReplicatedEntries.Search([&](FFortItemEntry& entry) {
         return entry.ItemDefinition && entry.ItemDefinition->IsA(UFortEditToolItemDefinition::StaticClass());
     });
-    if (!editToolEntry) { CALL_OG_VOID(Stack, Context, ServerEndEditingBuildingActorOG, _saved); return; }
+    if (!editToolEntry) return;
 
     playerController->MyFortPawn->EquipWeaponDefinition((UFortWeaponItemDefinition*)editToolEntry->ItemDefinition, editToolEntry->ItemGuid, editToolEntry->TrackerGuid, false);
 
-    auto editTool = CastSDK<AFortWeap_EditingTool>(playerController->MyFortPawn->CurrentWeapon);
-    if (editTool) {
+    if (auto editTool = CastSDK<AFortWeap_EditingTool>(playerController->MyFortPawn->CurrentWeapon)) {
         editTool->EditActor = nullptr;
         editTool->OnRep_EditActor();
     }
-
-    CALL_OG_VOID(Stack, Context, ServerEndEditingBuildingActorOG, _saved);
 }
 
-void Building::ServerRepairBuildingActorHook(UObject* Context, FFrame& Stack) {
-    STACK_SAVE(Stack, _saved);
-    ABuildingSMActor* building = nullptr;
-    Stack.StepCompiledIn(&building);
-    Stack.IncrementCode();
+void Building::ServerRepairBuildingActor(UObject* context, Params::AFortPlayerController_ServerRepairBuildingActor* params) {
+    auto playerController = (AFortPlayerController*)context;
+    auto building = params->BuildingActorToRepair;
 
-    auto playerController = (AFortPlayerController*)Context;
-    if (playerController && building) {
-        auto price = (int32_t)std::floor((10.f * (1.f - building->GetHealthPercent())) * 0.75f);
-        auto res = UFortKismetLibrary::K2_GetResourceItemDefinition(building->ResourceType);
-        auto itemEntry = playerController->WorldInventory->Inventory.ReplicatedEntries.Search([res](FFortItemEntry& entry) { return entry.ItemDefinition == res; });
-        if (itemEntry) {
-            itemEntry->Count -= price;
-            if (itemEntry->Count <= 0) Inventory::Remove(playerController, itemEntry->ItemGuid);
-            else Inventory::ReplaceEntry(playerController, *itemEntry);
-            building->RepairBuilding(playerController, price);
-            if (auto controllerAthena = CastSDK<AFortPlayerControllerAthena>(playerController)) controllerAthena->BuildingsRepaired++;
+    if (!playerController || !building)
+        return;
+
+    auto price = (int32_t)std::floor((10.f * (1.f - building->GetHealthPercent())) * 0.75f);
+    auto res = UFortKismetLibrary::K2_GetResourceItemDefinition(building->ResourceType);
+    auto itemEntry = playerController->WorldInventory->Inventory.ReplicatedEntries.Search([res](FFortItemEntry& entry) {
+        return entry.ItemDefinition == res;
+    });
+    if (!itemEntry) return;
+
+    itemEntry->Count -= price;
+    if (itemEntry->Count <= 0)
+        Inventory::Remove(playerController, itemEntry->ItemGuid);
+    else
+        Inventory::ReplaceEntry(playerController, *itemEntry);
+
+    building->RepairBuilding(playerController, price);
+
+    if (auto controllerAthena = CastSDK<AFortPlayerControllerAthena>(playerController))
+        controllerAthena->BuildingsRepaired++;
+}
+
+void Building::ServerSpawnDeco(UObject* context, Params::AFortDecoTool_ServerSpawnDeco* params) {
+    auto decoTool = (AFortDecoTool*)context;
+    auto attachedActor = params->AttachedActor;
+    auto inBuildingAttachmentType = params->InBuildingAttachmentType;
+
+    if (!decoTool || !attachedActor)
+        return;
+
+    auto itemDefinition = (UFortDecoItemDefinition*)decoTool->ItemDefinition;
+
+    if (auto contextTrapTool = CastSDK<AFortDecoTool_ContextTrap>(decoTool)) {
+        switch ((int)inBuildingAttachmentType) {
+        case 0:
+        case 6:
+            itemDefinition = contextTrapTool->ContextTrapItemDefinition->FloorTrap;
+            break;
+        case 7:
+        case 2:
+            itemDefinition = contextTrapTool->ContextTrapItemDefinition->CeilingTrap;
+            break;
+        case 1:
+            itemDefinition = contextTrapTool->ContextTrapItemDefinition->WallTrap;
+            break;
+        case 8:
+            itemDefinition = contextTrapTool->ContextTrapItemDefinition->StairTrap;
+            break;
         }
     }
 
-    CALL_OG_VOID(Stack, Context, ServerRepairBuildingActorOG, _saved);
+    if (!itemDefinition) return;
+
+    auto newTrap = Utils::SpawnActor<ABuildingActor>(itemDefinition->BlueprintClass.Get(), params->Location, params->Rotation, attachedActor);
+    if (!newTrap) return;
+
+    attachedActor->AttachBuildingActorToMe(newTrap, true);
+    attachedActor->bHiddenDueToTrapPlacement = itemDefinition->bReplacesBuildingWhenPlaced;
+    if (itemDefinition->bReplacesBuildingWhenPlaced)
+        attachedActor->bActorEnableCollision = false;
+    attachedActor->ForceNetUpdate();
+
+    auto pawn = (APawn*)decoTool->Owner;
+    if (!pawn)
+        return;
+    auto playerController = CastSDK<AFortPlayerControllerAthena>(pawn->Controller);
+    if (!playerController)
+        return;
+
+    auto itemEntry = playerController->WorldInventory->Inventory.ReplicatedEntries.Search([&](FFortItemEntry& entry) {
+        return entry.ItemDefinition == decoTool->ItemDefinition;
+    });
+    if (!itemEntry)
+        return;
+
+    itemEntry->Count--;
+    if (itemEntry->Count <= 0)
+        Inventory::Remove(playerController, itemEntry->ItemGuid);
+    else
+        Inventory::ReplaceEntry(playerController, *itemEntry);
+
+    auto playerState = (AFortPlayerStateAthena*)playerController->PlayerState;
+    if (playerState && newTrap->TeamIndex != playerState->TeamIndex) {
+        newTrap->TeamIndex = playerState->TeamIndex;
+        newTrap->Team = (EEFortTeam)newTrap->TeamIndex;
+    }
 }
 
-void Building::ServerSpawnDecoHook(UObject* Context, FFrame& Stack) {
-    STACK_SAVE(Stack, _saved);
-    FVector Location;
-    FRotator Rotation;
-    ABuildingSMActor* AttachedActor = nullptr;
-    EEBuildingAttachmentType InBuildingAttachmentType = EEBuildingAttachmentType::ATTACH_None;
-    Stack.StepCompiledIn(&Location);
-    Stack.StepCompiledIn(&Rotation);
-    Stack.StepCompiledIn(&AttachedActor);
-    Stack.StepCompiledIn(&InBuildingAttachmentType);
-    Stack.IncrementCode();
+static EEFortBuildingType GetBuildingTypeFromBuildingAttachmentType(EEBuildingAttachmentType buildingAttachmentType) {
+    if (uint8_t(buildingAttachmentType) <= 7) {
+        uint32_t val = 0xC5;
+        if (val & (1u << uint8_t(buildingAttachmentType)))
+            return EEFortBuildingType::Floor;
+    }
+    if (buildingAttachmentType == EEBuildingAttachmentType::ATTACH_Wall)
+        return EEFortBuildingType::Wall;
+    return EEFortBuildingType::None;
+}
 
-    auto DecoTool = (AFortDecoTool*)Context;
-    if (DecoTool && AttachedActor) {
-        auto ItemDefinition = (UFortDecoItemDefinition*)DecoTool->ItemDefinition;
-        if (auto ContextTrapTool = CastSDK<AFortDecoTool_ContextTrap>(DecoTool)) {
-            switch ((int)InBuildingAttachmentType) {
-            case 0: case 6: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->FloorTrap; break;
-            case 7: case 2: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->CeilingTrap; break;
-            case 1: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->WallTrap; break;
-            case 8: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->StairTrap; break;
-            }
-        }
-        if (ItemDefinition) {
-            auto NewTrap = Utils::SpawnActor<ABuildingActor>(ItemDefinition->BlueprintClass.Get(), Location, Rotation, AttachedActor);
-            if (NewTrap) {
-                AttachedActor->AttachBuildingActorToMe(NewTrap, true);
-                AttachedActor->bHiddenDueToTrapPlacement = ItemDefinition->bReplacesBuildingWhenPlaced;
-                if (ItemDefinition->bReplacesBuildingWhenPlaced) AttachedActor->bActorEnableCollision = false;
-                AttachedActor->ForceNetUpdate();
-                auto pawn = (APawn*)DecoTool->Owner;
-                auto playerController = pawn ? CastSDK<AFortPlayerControllerAthena>(pawn->Controller) : nullptr;
-                if (playerController) {
-                    auto itemEntry = playerController->WorldInventory->Inventory.ReplicatedEntries.Search([&](FFortItemEntry& entry) { return entry.ItemDefinition == DecoTool->ItemDefinition; });
-                    if (itemEntry) {
-                        itemEntry->Count--;
-                        if (itemEntry->Count <= 0) Inventory::Remove(playerController, itemEntry->ItemGuid);
-                        else Inventory::ReplaceEntry(playerController, *itemEntry);
-                        auto playerState = (AFortPlayerStateAthena*)playerController->PlayerState;
-                        if (playerState && NewTrap->TeamIndex != playerState->TeamIndex) {
-                            NewTrap->TeamIndex = playerState->TeamIndex;
-                            NewTrap->Team = (EEFortTeam)NewTrap->TeamIndex;
-                        }
-                    }
-                }
-            }
+void Building::ServerCreateBuildingAndSpawnDeco(UObject* context, Params::AFortDecoTool_ServerCreateBuildingAndSpawnDeco* params) {
+    auto tool = (AFortDecoTool*)context;
+    if (!tool) return;
+
+    auto pawn = (APawn*)tool->Owner;
+    if (!pawn) return;
+    auto playerController = CastSDK<AFortPlayerControllerAthena>(pawn->Controller);
+    if (!playerController) return;
+
+    auto itemDefinition = (UFortDecoItemDefinition*)tool->ItemDefinition;
+
+    if (auto contextTrapTool = CastSDK<AFortDecoTool_ContextTrap>(tool)) {
+        switch ((int)params->InBuildingAttachmentType) {
+        case 0:
+        case 6:
+            itemDefinition = contextTrapTool->ContextTrapItemDefinition->FloorTrap;
+            break;
+        case 7:
+        case 2:
+            itemDefinition = contextTrapTool->ContextTrapItemDefinition->CeilingTrap;
+            break;
+        case 1:
+            itemDefinition = contextTrapTool->ContextTrapItemDefinition->WallTrap;
+            break;
+        case 8:
+            itemDefinition = contextTrapTool->ContextTrapItemDefinition->StairTrap;
+            break;
         }
     }
 
-    CALL_OG_VOID(Stack, Context, ServerSpawnDecoOG, _saved);
-}
+    if (!itemDefinition) return;
 
-void Building::ServerCreateBuildingAndSpawnDecoHook(UObject* Context, FFrame& Stack) {
-    STACK_SAVE(Stack, _saved);
-    FVector_NetQuantize10 BuildingLocation;
-    FRotator BuildingRotation;
-    FVector_NetQuantize10 Location;
-    FRotator Rotation;
-    EEBuildingAttachmentType InBuildingAttachmentType = EEBuildingAttachmentType::ATTACH_None;
-    bool bSpawnDecoOnExtraPiece = false;
-    FVector BuildingExtraPieceLocation;
-    Stack.StepCompiledIn(&BuildingLocation);
-    Stack.StepCompiledIn(&BuildingRotation);
-    Stack.StepCompiledIn(&Location);
-    Stack.StepCompiledIn(&Rotation);
-    Stack.StepCompiledIn(&InBuildingAttachmentType);
-    Stack.StepCompiledIn(&bSpawnDecoOnExtraPiece);
-    Stack.StepCompiledIn(&BuildingExtraPieceLocation);
-    Stack.IncrementCode();
+    auto gameState = (AFortGameStateAthena*)UWorld::GetWorld()->GameState;
+    if (!gameState) return;
 
-    auto Tool = (AFortDecoTool*)Context;
-    if (Tool) {
-        auto pawn = (APawn*)Tool->Owner;
-        auto playerController = pawn ? CastSDK<AFortPlayerControllerAthena>(pawn->Controller) : nullptr;
-        if (playerController) {
-            auto ItemDefinition = (UFortDecoItemDefinition*)Tool->ItemDefinition;
-            if (auto ContextTrapTool = CastSDK<AFortDecoTool_ContextTrap>(Tool)) {
-                switch ((int)InBuildingAttachmentType) {
-                case 0: case 6: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->FloorTrap; break;
-                case 7: case 2: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->CeilingTrap; break;
-                case 1: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->WallTrap; break;
-                case 8: ItemDefinition = ContextTrapTool->ContextTrapItemDefinition->StairTrap; break;
-                }
-            }
-            if (ItemDefinition) {
-                auto gameState = (AFortGameStateAthena*)UWorld::GetWorld()->GameState;
-                if (gameState) {
-                    auto wantedType = GetBuildingTypeFromBuildingAttachmentType(InBuildingAttachmentType);
-                    UClass* buildClass = nullptr;
-                    for (auto cls : gameState->AllPlayerBuildableClasses) {
-                        if (!cls) continue;
-                        auto cdo = (ABuildingSMActor*)cls->ClassDefaultObject;
-                        if (cdo && cdo->BuildingType == wantedType) { buildClass = cls; break; }
-                    }
-                    if (buildClass) {
-                        auto smDefault = (ABuildingSMActor*)buildClass->ClassDefaultObject;
-                        auto resource = UFortKismetLibrary::K2_GetResourceItemDefinition(smDefault->ResourceType);
-                        auto itemEntry = playerController->WorldInventory->Inventory.ReplicatedEntries.Search([resource](FFortItemEntry& entry) { return entry.ItemDefinition == resource; });
-                        if (itemEntry) {
-                            ABuildingSMActor* building = Utils::SpawnActor<ABuildingSMActor>(buildClass, BuildingLocation, BuildingRotation, playerController);
-                            if (building) {
-                                building->bPlayerPlaced = true;
-                                building->InitializeKismetSpawnedBuildingActor(building, playerController, true, nullptr);
-                                if (!playerController->bBuildFree) {
-                                    itemEntry->Count -= 10;
-                                    if (itemEntry->Count <= 0) Inventory::Remove(playerController, itemEntry->ItemGuid);
-                                    else Inventory::ReplaceEntry(playerController, *itemEntry);
-                                }
-                                auto ps = (AFortPlayerStateAthena*)playerController->PlayerState;
-                                if (ps) { building->TeamIndex = ps->TeamIndex; building->Team = (EEFortTeam)building->TeamIndex; }
-                                Tool->ServerSpawnDeco(Location, Rotation, building, InBuildingAttachmentType);
-                            }
-                        }
-                    }
-                }
-            }
+    auto wantedType = GetBuildingTypeFromBuildingAttachmentType(params->InBuildingAttachmentType);
+
+    UClass* buildClass = nullptr;
+    for (auto cls : gameState->AllPlayerBuildableClasses) {
+        if (!cls) continue;
+        auto cdo = (ABuildingSMActor*)cls->ClassDefaultObject;
+        if (cdo && cdo->BuildingType == wantedType) {
+            buildClass = cls;
+            break;
         }
     }
+    if (!buildClass) return;
 
-    CALL_OG_VOID(Stack, Context, ServerCreateBuildingAndSpawnDecoOG, _saved);
+    auto smDefault = (ABuildingSMActor*)buildClass->ClassDefaultObject;
+    auto resource = UFortKismetLibrary::K2_GetResourceItemDefinition(smDefault->ResourceType);
+    auto itemEntry = playerController->WorldInventory->Inventory.ReplicatedEntries.Search([resource](FFortItemEntry& entry) {
+        return entry.ItemDefinition == resource;
+    });
+    if (!itemEntry) return;
+
+    ABuildingSMActor* building = Utils::SpawnActor<ABuildingSMActor>(buildClass, params->BuildingLocation, params->BuildingRotation, playerController);
+    if (!building) return;
+
+    building->bPlayerPlaced = true;
+    building->InitializeKismetSpawnedBuildingActor(building, playerController, true, nullptr);
+
+    if (!playerController->bBuildFree) {
+        itemEntry->Count -= 10;
+        if (itemEntry->Count <= 0)
+            Inventory::Remove(playerController, itemEntry->ItemGuid);
+        else
+            Inventory::ReplaceEntry(playerController, *itemEntry);
+    }
+
+    auto playerState = (AFortPlayerStateAthena*)playerController->PlayerState;
+    if (playerState) {
+        building->TeamIndex = playerState->TeamIndex;
+        building->Team = (EEFortTeam)building->TeamIndex;
+    }
+
+    tool->ServerSpawnDeco(params->Location, params->Rotation, building, params->InBuildingAttachmentType);
 }
 
 void Building::OnDamageServer(ABuildingSMActor* actor, float damage, FGameplayTagContainer damageTags, FVector momentum, FHitResult hitInfo, AFortPlayerControllerAthena* instigatedBy, AActor* damageCauser, FGameplayEffectContextHandle effectContext) {
     auto gameState = (AFortGameStateAthena*)UWorld::GetWorld()->GameState;
-    if (!instigatedBy || !actor || actor->bPlayerPlaced || actor->GetHealth() == 1) { if (OnDamageServerOG) OnDamageServerOG(actor, damage, damageTags, momentum, hitInfo, instigatedBy, damageCauser, effectContext); return; }
+    if (!instigatedBy || !actor || actor->bPlayerPlaced || actor->GetHealth() == 1) {
+        if (BuildingActor_OnDamageServerOG) BuildingActor_OnDamageServerOG(actor, damage, damageTags, momentum, hitInfo, instigatedBy, damageCauser, effectContext);
+        return;
+    }
 
     auto weapon = CastSDK<AFortWeapon>(damageCauser);
-    if (!weapon || !weapon->WeaponData || !weapon->WeaponData->IsA(UFortWeaponMeleeItemDefinition::StaticClass())) { if (OnDamageServerOG) OnDamageServerOG(actor, damage, damageTags, momentum, hitInfo, instigatedBy, damageCauser, effectContext); return; }
+    if (!weapon || !weapon->WeaponData || !weapon->WeaponData->IsA(UFortWeaponMeleeItemDefinition::StaticClass())) {
+        if (BuildingActor_OnDamageServerOG) BuildingActor_OnDamageServerOG(actor, damage, damageTags, momentum, hitInfo, instigatedBy, damageCauser, effectContext);
+        return;
+    }
 
     FName pickaxeTag = MakeFName(L"Weapon.Melee.Impact.Pickaxe");
     bool hasPickaxeTag = false;
     for (auto& tag : damageTags.GameplayTags) {
-        if (tag.TagName == pickaxeTag) { hasPickaxeTag = true; break; }
+        if (tag.TagName == pickaxeTag) {
+            hasPickaxeTag = true;
+            break;
+        }
     }
-    if (!hasPickaxeTag) { if (OnDamageServerOG) OnDamageServerOG(actor, damage, damageTags, momentum, hitInfo, instigatedBy, damageCauser, effectContext); return; }
+    if (!hasPickaxeTag) {
+        if (BuildingActor_OnDamageServerOG) BuildingActor_OnDamageServerOG(actor, damage, damageTags, momentum, hitInfo, instigatedBy, damageCauser, effectContext);
+        return;
+    }
 
     auto resource = UFortKismetLibrary::K2_GetResourceItemDefinition(actor->ResourceType);
-    if (!resource) { if (OnDamageServerOG) OnDamageServerOG(actor, damage, damageTags, momentum, hitInfo, instigatedBy, damageCauser, effectContext); return; }
+    if (!resource) {
+        if (BuildingActor_OnDamageServerOG) BuildingActor_OnDamageServerOG(actor, damage, damageTags, momentum, hitInfo, instigatedBy, damageCauser, effectContext);
+        return;
+    }
 
     int maxMat = (int)Utils::EvaluateScalableFloat(resource->MaxStackSize);
     int resCount = 0;
@@ -353,7 +394,10 @@ void Building::OnDamageServer(ABuildingSMActor* actor, float damage, FGameplayTa
     }
 
     if (resCount > 0) {
-        auto itemEntry = instigatedBy->WorldInventory->Inventory.ReplicatedEntries.Search([&](FFortItemEntry& entry) { return entry.ItemDefinition == resource; });
+        auto itemEntry = instigatedBy->WorldInventory->Inventory.ReplicatedEntries.Search([&](FFortItemEntry& entry) {
+            return entry.ItemDefinition == resource;
+        });
+
         if (itemEntry) {
             itemEntry->Count += resCount;
             if (itemEntry->Count > maxMat) {
@@ -372,17 +416,9 @@ void Building::OnDamageServer(ABuildingSMActor* actor, float damage, FGameplayTa
 
     instigatedBy->ClientReportDamagedResourceBuilding(actor, resCount == 0 ? EEFortResourceType::None : actor->ResourceType, resCount, false, damage == 100.f);
 
-    if (OnDamageServerOG) OnDamageServerOG(actor, damage, damageTags, momentum, hitInfo, instigatedBy, damageCauser, effectContext);
+    if (BuildingActor_OnDamageServerOG)
+        BuildingActor_OnDamageServerOG(actor, damage, damageTags, momentum, hitInfo, instigatedBy, damageCauser, effectContext);
 }
 
 void Building::Hook() {
-    Utils::ExecHook(L"/Script/FortniteGame.FortPlayerController.ServerCreateBuildingActor", (void*)ServerCreateBuildingActorHook, ServerCreateBuildingActorOG);
-    Utils::ExecHook(L"/Script/FortniteGame.FortPlayerController.ServerBeginEditingBuildingActor", (void*)ServerBeginEditingBuildingActorHook, ServerBeginEditingBuildingActorOG);
-    Utils::ExecHook(L"/Script/FortniteGame.FortPlayerController.ServerEditBuildingActor", (void*)ServerEditBuildingActorHook, ServerEditBuildingActorOG);
-    Utils::ExecHook(L"/Script/FortniteGame.FortPlayerController.ServerEndEditingBuildingActor", (void*)ServerEndEditingBuildingActorHook, ServerEndEditingBuildingActorOG);
-    Utils::ExecHook(L"/Script/FortniteGame.FortPlayerController.ServerRepairBuildingActor", (void*)ServerRepairBuildingActorHook, ServerRepairBuildingActorOG);
-    Utils::ExecHook(L"/Script/FortniteGame.FortDecoTool.ServerSpawnDeco", (void*)ServerSpawnDecoHook, ServerSpawnDecoOG);
-    Utils::ExecHook(L"/Script/FortniteGame.FortDecoTool_ContextTrap.ServerSpawnDeco_Implementation", (void*)ServerSpawnDecoHook, ServerSpawnDecoOG);
-    Utils::ExecHook(L"/Script/FortniteGame.FortDecoTool.ServerCreateBuildingAndSpawnDeco", (void*)ServerCreateBuildingAndSpawnDecoHook, ServerCreateBuildingAndSpawnDecoOG);
-    Utils::ExecHook(L"/Script/FortniteGame.FortDecoTool_ContextTrap.ServerCreateBuildingAndSpawnDeco_Implementation", (void*)ServerCreateBuildingAndSpawnDecoHook, ServerCreateBuildingAndSpawnDecoOG);
 }

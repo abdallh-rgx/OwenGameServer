@@ -58,26 +58,11 @@ TUObjectArray* InSDKUtils::GetGObjects() {
     return reinterpret_cast<TUObjectArray*>(Sarah::ImageBase + Off::GObjects);
 }
 
-// ============================================================
-// FName reading — MobileDumper-7 bridge
-// ------------------------------------------------------------
-// The manual FNamePool walker that used to live here read the pool with raw
-// pointer dereferences (*(uint8_t**)(...)) guarded only by range checks, which
-// SIGSEGV'd whenever a block pointer or entry was stale/unmapped. All FName
-// decoding now goes through the battle-tested MobileDumper-7 core
-// (libMobileDumperCore.a) via the single bridge function MD7_ReadFName(),
-// whose DirectMemory backend validates every read against /proc/self/maps
-// before any memcpy. See src/core/mobile_dumper_bridge.cpp.
-// ============================================================
-extern "C" int MD7_Setup(uintptr_t imageBase);
-extern "C" int MD7_ReadFName(int32_t index, char* outBuf, int bufSize);
-
 std::string InSDKUtils::GetNameByIndex(int32 Index) {
-    char Buffer[1024];
-    const int Len = MD7_ReadFName(Index, Buffer, static_cast<int>(sizeof(Buffer)));
-    if (Len <= 0)
-        return std::string();
-    return std::string(Buffer, static_cast<size_t>(Len));
+    FName inName{};
+    inName.ComparisonIndex = Index;
+    FString result = UKismetStringLibrary::Conv_NameToString(inName);
+    return result.Num() > 0 ? result.ToString() : "";
 }
 
 UObject* InSDKUtils::GetObjectByIndex(int32 Index) {

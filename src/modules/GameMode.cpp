@@ -12,6 +12,35 @@
 #include "UObject.hpp"
 #include "FName.hpp"
 
+static UFunction* g_ReadyToStartMatch = nullptr;
+static UFunction* g_HandleStartingNewPlayer = nullptr;
+static UFunction* g_OnAircraftEnteredDropZone = nullptr;
+static UFunction* g_OnAircraftExitedDropZone = nullptr;
+
+static UFunction* GetReadyToStartMatch() {
+    if (!g_ReadyToStartMatch)
+        g_ReadyToStartMatch = (UFunction*)Utils::FindObject(L"/Script/Engine.GameMode.ReadyToStartMatch");
+    return g_ReadyToStartMatch;
+}
+
+static UFunction* GetHandleStartingNewPlayer() {
+    if (!g_HandleStartingNewPlayer)
+        g_HandleStartingNewPlayer = (UFunction*)Utils::FindObject(L"/Script/Engine.GameModeBase.HandleStartingNewPlayer");
+    return g_HandleStartingNewPlayer;
+}
+
+static UFunction* GetOnAircraftEnteredDropZone() {
+    if (!g_OnAircraftEnteredDropZone)
+        g_OnAircraftEnteredDropZone = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortGameModeAthena.OnAircraftEnteredDropZone");
+    return g_OnAircraftEnteredDropZone;
+}
+
+static UFunction* GetOnAircraftExitedDropZone() {
+    if (!g_OnAircraftExitedDropZone)
+        g_OnAircraftExitedDropZone = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortGameModeAthena.OnAircraftExitedDropZone");
+    return g_OnAircraftExitedDropZone;
+}
+
 UFortPlaylistAthena* GameMode::GetPlaylist() {
     if (bDuos)
         return Utils::Find<UFortPlaylistAthena>(L"FortPlaylistAthena Playlist_DefaultDuo.Playlist_DefaultDuo");
@@ -56,15 +85,16 @@ void GameMode::SetPlaylist(AFortGameModeAthena* gameMode) {
     LOGI("[GameMode] Playlist set: %s", gameMode->CurrentPlaylistName.ToString().c_str());
 }
 
+static bool bReady = false;
 static bool bLootInitialized = false;
 
-void GameMode::ReadyToStartMatchHook(UObject* Context, FFrame& Stack, bool* Ret) {
-    Stack.IncrementCode();
-    if (Ret) *Ret = false;
+void GameMode::ReadyToStartMatch(UObject* context, Params::AGameMode_ReadyToStartMatch* params) {
+    params->ReturnValue = false;
 
-    auto gameMode = CastSDK<AFortGameModeAthena>(Context);
+    auto gameMode = CastSDK<AFortGameModeAthena>(context);
     if (!gameMode) {
-        if (ReadyToStartMatchOG) ReadyToStartMatchOG(Context, Stack, Ret);
+        UFunction* pfn = GetReadyToStartMatch();
+        if (pfn) Sarah::CallProcessEvent(context, pfn, params);
         return;
     }
 
@@ -89,7 +119,7 @@ void GameMode::ReadyToStartMatchHook(UObject* Context, FFrame& Stack, bool* Ret)
             }
         }
 
-        if (Ret) *Ret = false;
+        params->ReturnValue = false;
         return;
     }
 
@@ -102,12 +132,12 @@ void GameMode::ReadyToStartMatchHook(UObject* Context, FFrame& Stack, bool* Ret)
         }
 
         if (startsNum == 0) {
-            if (Ret) *Ret = false;
+            params->ReturnValue = false;
             return;
         }
 
         if (!bCreative && !gameState->MapInfo) {
-            if (Ret) *Ret = false;
+            params->ReturnValue = false;
             return;
         }
 
@@ -201,85 +231,7 @@ void GameMode::ReadyToStartMatchHook(UObject* Context, FFrame& Stack, bool* Ret)
         }
     }
 
-    if (Ret) *Ret = gameMode->AlivePlayers.Num() >= gameMode->WarmupRequiredPlayerCount;
-}
-
-void GameMode::HandleStartingNewPlayerHook(UObject* Context, FFrame& Stack) {
-    AFortPlayerControllerAthena* NewPlayer = nullptr;
-    Stack.StepCompiledIn(&NewPlayer);
-    Stack.IncrementCode();
-
-    auto gameMode = (AFortGameModeAthena*)Context;
-    if (!gameMode || !NewPlayer) {
-        if (HandleStartingNewPlayerOG) HandleStartingNewPlayerOG(Context, Stack);
-        return;
-    }
-
-    auto gameState = (AFortGameStateAthena*)gameMode->GameState;
-    AFortPlayerStateAthena* playerState = (AFortPlayerStateAthena*)NewPlayer->PlayerState;
-
-    if (!playerState || !gameState) {
-        if (HandleStartingNewPlayerOG) HandleStartingNewPlayerOG(Context, Stack);
-        return;
-    }
-
-    playerState->SquadId = playerState->TeamIndex - 3;
-    playerState->OnRep_SquadId();
-
-    FGameMemberInfo Member;
-    Member.MostRecentArrayReplicationKey = -1;
-    Member.ReplicationID = -1;
-    Member.ReplicationKey = -1;
-    Member.TeamIndex = playerState->TeamIndex;
-    Member.SquadId = playerState->SquadId;
-    Member.MemberUniqueId = playerState->UniqueId;
-
-    gameState->GameMemberInfoArray.Members.Add(Member);
-    Utils::MarkItemDirty(gameState->GameMemberInfoArray, Member);
-
-    StartingCount++;
-
-    if (!NewPlayer->MatchReport) {
-        UClass* reportClass = UAthenaPlayerMatchReport::StaticClass();
-        if (reportClass) {
-            NewPlayer->MatchReport = (UAthenaPlayerMatchReport*)UGameplayStatics::SpawnObject(reportClass, NewPlayer);
-            LOGI("[GameMode] MatchReport (newPlayer) = %p", NewPlayer->MatchReport);
-        }
-    }
-
-    if (HandleStartingNewPlayerOG) HandleStartingNewPlayerOG(Context, Stack);
-}
-
-void GameMode::OnAircraftEnteredDropZoneHook(UObject* Context, FFrame& Stack) {
-    Stack.IncrementCode();
-
-    if (!bDev && bGameSessions) {
-        API::GameServer(BackendUrl + "/solstice/api/v1/matchmaking/stop/by-address", IP, g_Port);
-    }
-
-    if (OnAircraftEnteredDropZoneOG) OnAircraftEnteredDropZoneOG(Context, Stack);
-}
-
-void GameMode::OnAircraftExitedDropZoneHook(UObject* Context, FFrame& Stack) {
-    Stack.IncrementCode();
-
-    auto gameMode = (AFortGameModeAthena*)Context;
-    if (!gameMode) {
-        if (OnAircraftExitedDropZoneOG) OnAircraftExitedDropZoneOG(Context, Stack);
-        return;
-    }
-
-    for (auto& player : gameMode->AlivePlayers) {
-        if (player && player->IsInAircraft()) {
-            auto aircraftComponent = player->GetAircraftComponent();
-            if (aircraftComponent) {
-                FRotator rot{};
-                aircraftComponent->ServerAttemptAircraftJump(rot);
-            }
-        }
-    }
-
-    if (OnAircraftExitedDropZoneOG) OnAircraftExitedDropZoneOG(Context, Stack);
+    params->ReturnValue = gameMode->AlivePlayers.Num() >= gameMode->WarmupRequiredPlayerCount;
 }
 
 APawn* GameMode::SpawnDefaultPawnFor(AGameModeBase* context, AController* newPlayer, AActor* startSpot) {
@@ -348,6 +300,81 @@ APawn* GameMode::SpawnDefaultPawnFor(AGameModeBase* context, AController* newPla
     return pawn;
 }
 
+void GameMode::HandleStartingNewPlayer(UObject* context, Params::AGameModeBase_HandleStartingNewPlayer* params) {
+    auto gameMode = (AFortGameModeAthena*)context;
+    auto newPlayer = (AFortPlayerControllerAthena*)params->NewPlayer;
+
+    UFunction* pfn = GetHandleStartingNewPlayer();
+
+    if (!gameMode || !newPlayer) {
+        if (pfn) Sarah::CallProcessEvent(context, pfn, params);
+        return;
+    }
+
+    auto gameState = (AFortGameStateAthena*)gameMode->GameState;
+    AFortPlayerStateAthena* playerState = (AFortPlayerStateAthena*)newPlayer->PlayerState;
+
+    if (!playerState || !gameState) {
+        if (pfn) Sarah::CallProcessEvent(context, pfn, params);
+        return;
+    }
+
+    playerState->SquadId = playerState->TeamIndex - 3;
+    playerState->OnRep_SquadId();
+
+    FGameMemberInfo Member;
+    Member.MostRecentArrayReplicationKey = -1;
+    Member.ReplicationID = -1;
+    Member.ReplicationKey = -1;
+    Member.TeamIndex = playerState->TeamIndex;
+    Member.SquadId = playerState->SquadId;
+    Member.MemberUniqueId = playerState->UniqueId;
+
+    gameState->GameMemberInfoArray.Members.Add(Member);
+    Utils::MarkItemDirty(gameState->GameMemberInfoArray, Member);
+
+    StartingCount++;
+
+    if (!newPlayer->MatchReport) {
+        UClass* reportClass = UAthenaPlayerMatchReport::StaticClass();
+        if (reportClass) {
+            newPlayer->MatchReport = (UAthenaPlayerMatchReport*)UGameplayStatics::SpawnObject(reportClass, newPlayer);
+            LOGI("[GameMode] MatchReport (newPlayer) = %p", newPlayer->MatchReport);
+        } else {
+            LOGE("[GameMode] MatchReport StaticClass is null");
+        }
+    }
+
+    if (pfn) Sarah::CallProcessEvent(context, pfn, params);
+}
+
+void GameMode::OnAircraftEnteredDropZone(UObject* context, Params::AFortGameModeAthena_OnAircraftEnteredDropZone* params) {
+    if (!bDev && bGameSessions) {
+        API::GameServer(BackendUrl + "/solstice/api/v1/matchmaking/stop/by-address", IP, g_Port);
+    }
+
+    UFunction* pfn = GetOnAircraftEnteredDropZone();
+    if (pfn) Sarah::CallProcessEvent(context, pfn, params);
+}
+
+void GameMode::OnAircraftExitedDropZone(UObject* context, Params::AFortGameModeAthena_OnAircraftExitedDropZone* params) {
+    auto gameMode = (AFortGameModeAthena*)context;
+    if (!gameMode) return;
+
+    for (auto& player : gameMode->AlivePlayers) {
+        if (player && player->IsInAircraft()) {
+            auto aircraftComponent = player->GetAircraftComponent();
+            if (aircraftComponent) {
+                FRotator rot{};
+                aircraftComponent->ServerAttemptAircraftJump(rot);
+            }
+        }
+    }
+
+    UFunction* pfn = GetOnAircraftExitedDropZone();
+    if (pfn) Sarah::CallProcessEvent(context, pfn, params);
+}
+
 EEFortTeam GameMode::PickTeam(AFortGameModeAthena* gameMode, uint8_t preferredTeam, AFortPlayerControllerAthena* controller) {
     uint8_t ret = CurrentTeam;
 
@@ -367,12 +394,4 @@ EEFortTeam GameMode::PickTeam(AFortGameModeAthena* gameMode, uint8_t preferredTe
 }
 
 void GameMode::Hook() {
-    Utils::ExecHook(L"/Script/Engine.GameMode.ReadyToStartMatch",
-                    (void*)ReadyToStartMatchHook, ReadyToStartMatchOG);
-    Utils::ExecHook(L"/Script/Engine.GameModeBase.HandleStartingNewPlayer",
-                    (void*)HandleStartingNewPlayerHook, HandleStartingNewPlayerOG);
-    Utils::ExecHook(L"/Script/FortniteGame.FortGameModeAthena.OnAircraftEnteredDropZone",
-                    (void*)OnAircraftEnteredDropZoneHook, OnAircraftEnteredDropZoneOG);
-    Utils::ExecHook(L"/Script/FortniteGame.FortGameModeAthena.OnAircraftExitedDropZone",
-                    (void*)OnAircraftExitedDropZoneHook, OnAircraftExitedDropZoneOG);
 }

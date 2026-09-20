@@ -1,60 +1,10 @@
 #pragma once
 #include <cstdint>
-#include <cstring>
 #include <string>
 #include <vector>
 #include "Offsets.hpp"
 #include "AndroidBase.hpp"
 #include "FName.hpp"
-
-struct FOutParmRec {
-    SDK::FProperty* Property;
-    uint8_t* PropAddr;
-    FOutParmRec* NextOutParm;
-};
-
-class alignas(0x8) FOutputDevice {
-public:
-    bool bSuppressEventTag;
-    bool bAutoEmitLineTerminator;
-};
-
-class FFrame : public FOutputDevice {
-public:
-    void** VTable;
-    SDK::UFunction* Node;
-    SDK::UObject* Object;
-    uint8_t* Code;
-    uint8_t* Locals;
-    void* MostRecentProperty;
-    uint8_t* MostRecentPropertyAddress;
-    void* FlowStackData;
-    int32_t FlowStackNum;
-    int32_t FlowStackMax;
-    FFrame* PreviousFrame;
-    FOutParmRec* OutParms;
-    uint8_t _Padding1[0x20];
-    SDK::FField* PropertyChainForCompiledIn;
-    SDK::UFunction* CurrentNativeFunction;
-    bool bArrayContextFailed;
-
-    void StepCompiledIn(void* Result = nullptr, bool ForceExplicitProp = false) {
-        (void)Result;
-        (void)ForceExplicitProp;
-    }
-
-    template <typename T>
-    T& StepCompiledInRef() {
-        static T TempVal{};
-        TempVal = T{};
-        MostRecentPropertyAddress = nullptr;
-        return TempVal;
-    }
-
-    void IncrementCode() {
-        Code = (uint8_t*)((uint64_t)Code + (bool)Code);
-    }
-};
 
 struct FVectorLocal {
     double X, Y, Z;
@@ -142,106 +92,70 @@ inline std::wstring FNameToWString(const FName& name) {
 
 class Utils {
 public:
-    static SDK::UObject* FindObject(const wchar_t* path, SDK::UClass* cls = nullptr);
-    static SDK::UObject* LoadObject(const wchar_t* path, SDK::UClass* cls = nullptr);
-    static SDK::UObject* FindOrLoad(const wchar_t* path, SDK::UClass* cls = nullptr);
+    static UObject* FindObject(const wchar_t* path, UClass* cls = nullptr);
+    static UObject* LoadObject(const wchar_t* path, UClass* cls = nullptr);
+    static UObject* FindOrLoad(const wchar_t* path, UClass* cls = nullptr);
 
-    template <typename T = SDK::UObject>
+    template <typename T = UObject>
     static T* Find(const wchar_t* path) {
         return (T*)FindObject(path, nullptr);
     }
 
-    template <typename T = SDK::UObject>
+    template <typename T = UObject>
     static T* Load(const wchar_t* path) {
         return (T*)LoadObject(path, nullptr);
     }
 
-    template <typename T = SDK::UObject>
+    template <typename T = UObject>
     static T* Get(const wchar_t* path) {
         return (T*)FindOrLoad(path, nullptr);
     }
 
-    static SDK::AActor* SpawnActor(SDK::UClass* cls, const FVector& loc, const FRotator& rot = FRotator(), SDK::AActor* owner = nullptr);
+    static AActor* SpawnActor(UClass* cls, const FVector& loc, const FRotator& rot = FRotator(), AActor* owner = nullptr);
 
-    template <typename T = SDK::AActor>
-    static T* SpawnActor(SDK::UClass* cls, const FVector& loc, const FRotator& rot = FRotator(), SDK::AActor* owner = nullptr) {
+    template <typename T = AActor>
+    static T* SpawnActor(UClass* cls, const FVector& loc, const FRotator& rot = FRotator(), AActor* owner = nullptr) {
         return (T*)SpawnActor(cls, loc, rot, owner);
     }
 
-    template <typename T = SDK::AActor>
-    static T* SpawnActor(const FVector& loc, const FRotator& rot = FRotator(), SDK::AActor* owner = nullptr) {
+    template <typename T = AActor>
+    static T* SpawnActor(const FVector& loc, const FRotator& rot = FRotator(), AActor* owner = nullptr) {
         return (T*)SpawnActor(T::StaticClass(), loc, rot, owner);
     }
 
-    static std::vector<SDK::AActor*> GetAllActors(SDK::UClass* cls);
+    static std::vector<AActor*> GetAllActors(UClass* cls);
 
-    template <typename T = SDK::AActor>
+    template <typename T = AActor>
     static std::vector<T*> GetAll() {
         std::vector<T*> out;
-        for (SDK::AActor* a : GetAllActors(T::StaticClass())) out.push_back((T*)a);
+        for (AActor* a : GetAllActors(T::StaticClass())) out.push_back((T*)a);
         return out;
     }
 
-    template <typename T = SDK::AActor>
-    static std::vector<T*> GetAll(SDK::UClass* cls) {
+    template <typename T = AActor>
+    static std::vector<T*> GetAll(UClass* cls) {
         std::vector<T*> out;
-        for (SDK::AActor* a : GetAllActors(cls)) out.push_back((T*)a);
+        for (AActor* a : GetAllActors(cls)) out.push_back((T*)a);
         return out;
     }
 
     static float EvaluateScalableFloat(FScalableFloat& value);
+
     static float EvaluateCurve(FCurveTableRowHandle& handle, float inTime);
+
     static FString ToFString(const std::wstring& s);
+
     static std::wstring FromFString(const FString& s);
+
     static bool TagContainerHasTag(const FGameplayTagContainer& container, const wchar_t* tagName);
+
     static bool TagContainerHasAll(const FGameplayTagContainer& container, const FGameplayTagContainer& required);
+
     static void MarkItemDirty(FFastArraySerializer& serializer, FFastArraySerializerItem& item);
+
     static void MarkArrayDirty(FFastArraySerializer& serializer);
-
-    template <typename _Ot = void*>
-    static void ExecHook(SDK::UFunction* Fn, void* Detour, _Ot& Orig) {
-        if (!Fn) return;
-        Orig = (_Ot)Fn->ExecFunction;
-        Fn->ExecFunction = reinterpret_cast<decltype(Fn->ExecFunction)>(Detour);
-    }
-
-    template <typename _Ot = void*>
-    static void ExecHook(const wchar_t* FnPath, void* Detour, _Ot& Orig) {
-        SDK::UFunction* Fn = (SDK::UFunction*)FindObject(FnPath);
-        if (!Fn) return;
-        Orig = (_Ot)Fn->ExecFunction;
-        Fn->ExecFunction = reinterpret_cast<decltype(Fn->ExecFunction)>(Detour);
-    }
-
-    static void ExecHook(const wchar_t* FnPath, void* Detour) {
-        SDK::UFunction* Fn = (SDK::UFunction*)FindObject(FnPath);
-        if (!Fn) return;
-        Fn->ExecFunction = reinterpret_cast<decltype(Fn->ExecFunction)>(Detour);
-    }
 };
 
 namespace Sarah {
 void* EngineRealloc(void* ptr, int64_t newLen, uint32_t alignment);
 }
-
-#define STACK_SAVE(_Stack, _Saved) FFrame _Saved = (_Stack)
-
-#define CALL_OG_VOID(_Stack, _Ctx, _OG, _Saved) do { \
-    if (_OG && (_Stack).CurrentNativeFunction) { \
-        auto _f = (_Stack).CurrentNativeFunction; \
-        auto _orig = _f->ExecFunction; \
-        _f->ExecFunction = (decltype(_f->ExecFunction))_OG; \
-        _OG((_Ctx), _Saved); \
-        _f->ExecFunction = _orig; \
-    } \
-} while(0)
-
-#define CALL_OG_RET(_Stack, _Ctx, _OG, _Saved, _Ret) do { \
-    if (_OG && (_Stack).CurrentNativeFunction) { \
-        auto _f = (_Stack).CurrentNativeFunction; \
-        auto _orig = _f->ExecFunction; \
-        _f->ExecFunction = (decltype(_f->ExecFunction))_OG; \
-        _OG((_Ctx), _Saved, (_Ret)); \
-        _f->ExecFunction = _orig; \
-    } \
-} while(0)

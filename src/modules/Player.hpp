@@ -5,36 +5,20 @@ class Player {
 public:
     static inline void (*ClientOnPawnDiedOG)(AFortPlayerControllerAthena*, FFortPlayerDeathReport&) = nullptr;
 
-    static inline void (*ServerAcknowledgePossessionOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*ServerExecuteInventoryItemOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*ServerReturnToMainMenuOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*ServerAttemptAircraftJumpOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*ServerPlayEmoteItemOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*ServerSendZiplineStateOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*ServerHandlePickupInfoOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*MovingEmoteStoppedOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*ServerAttemptInventoryDropOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*ServerClientIsReadyToRespawnOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*ServerChangeNameOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*OnCapsuleBeginOverlapOG)(UObject*, FFrame&) = nullptr;
-    static inline void (*TeleportPlayerPawnOG)(UObject*, FFrame&, bool*) = nullptr;
-
-    static void ServerAcknowledgePossessionHook(UObject*, FFrame&);
-    static void ServerExecuteInventoryItemHook(UObject*, FFrame&);
-    static void ServerReturnToMainMenuHook(UObject*, FFrame&);
-    static void ServerAttemptAircraftJumpHook(UObject*, FFrame&);
-    static void ServerPlayEmoteItemHook(UObject*, FFrame&);
-    static void ServerSendZiplineStateHook(UObject*, FFrame&);
-    static void ServerHandlePickupInfoHook(UObject*, FFrame&);
-    static void MovingEmoteStoppedHook(UObject*, FFrame&);
-    static void ServerAttemptInventoryDropHook(UObject*, FFrame&);
-    static void ServerClientIsReadyToRespawnHook(UObject*, FFrame&);
-    static void ServerChangeNameHook(UObject*, FFrame&);
-    static void OnCapsuleBeginOverlapHook(UObject*, FFrame&);
-    static void TeleportPlayerPawnHook(UObject*, FFrame&, bool*);
-
-    static void ClientOnPawnDied(AFortPlayerControllerAthena*, FFortPlayerDeathReport&);
-    static void InternalPickup(AFortPlayerControllerAthena*, FFortItemEntry);
-
+    static void ServerAcknowledgePossession(UObject* context, Params::APlayerController_ServerAcknowledgePossession* params);
+    static void ServerExecuteInventoryItem(UObject* context, Params::AFortPlayerController_ServerExecuteInventoryItem* params);
+    static void ServerReturnToMainMenu(UObject* context);
+    static void ServerAttemptAircraftJump(UObject* context, Params::UFortControllerComponent_Aircraft_ServerAttemptAircraftJump* params);
+    static void ServerPlayEmoteItem(UObject* context, Params::AFortPlayerController_ServerPlayEmoteItem* params);
+    static void ServerSendZiplineState(UObject* context, Params::AFortPlayerPawn_ServerSendZiplineState* params);
+    static void ServerHandlePickupInfo(UObject* context, Params::AFortPlayerPawn_ServerHandlePickupInfo* params);
+    static void MovingEmoteStopped(UObject* context);
+    static void ServerAttemptInventoryDrop(UObject* context, Params::AFortPlayerController_ServerAttemptInventoryDrop* params);
+    static void ServerClientIsReadyToRespawn(UObject* context);
+    static void ServerChangeName(UObject* context, Params::APlayerController_ServerChangeName* params);
+    static void OnCapsuleBeginOverlap(UObject* context, Params::AFortPlayerPawn_OnCapsuleBeginOverlap* params);
+    static void TeleportPlayerPawn(UObject* context, Params::UFortMissionLibrary_TeleportPlayerPawn* params);
+    static void ClientOnPawnDied(AFortPlayerControllerAthena* playerController, FFortPlayerDeathReport& deathReport);
+    static void InternalPickup(AFortPlayerControllerAthena* pc, FFortItemEntry pickupEntry);
     static void Hook();
 };

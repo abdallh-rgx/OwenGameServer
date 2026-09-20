@@ -87,12 +87,8 @@ constexpr uint64_t K2_GetResourceItemDefinition = 0x6E9C44C;
 constexpr uint64_t TossPickupFromContainer  = 0x6E9B548;
 constexpr uint64_t EvaluateCurveTableRow    = 0x9A73B60;
 
-// NOTE: the old FNamePool/FNameEntry layout constants that used to live here
-// were REMOVED. Manual FNamePool walking is dead: every FName-by-index read
-// goes through the MobileDumper-7 core bridge (MD7_ReadFName in
-// src/core/mobile_dumper_bridge.cpp), which owns its own private copy of the
-// Fortnite 21.30 layout constants and validates every read against
-// /proc/self/maps before touching memory. Off::GNames above is kept only as
-// the informational RVA returned by InSDKUtils::GetGNames().
+constexpr uint32_t FNamePool_Blocks         = 0x0040;
+constexpr uint32_t FNamePool_ByteCursor     = 0x003C;
+constexpr uint32_t FNameEntry_Stride        = 0x0002;
 
 }

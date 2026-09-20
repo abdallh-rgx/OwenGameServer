@@ -12,40 +12,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # NDK 25.2.9519653 (r25c): must match the NDK used to build the committed
-      # external/MobileDumperCore/lib/arm64-v8a/libMobileDumperCore.a
-      # (see external/MobileDumperCore/README.md).
       - name: Set up NDK
         run: |
           ANDROID_ROOT=/usr/local/lib/android/sdk
           SDKMANAGER=$ANDROID_ROOT/cmdline-tools/latest/bin/sdkmanager
           yes | $SDKMANAGER --licenses > /dev/null 2>&1 || true
-          yes | $SDKMANAGER "ndk;25.2.9519653" > /dev/null 2>&1
-          echo "ANDROID_NDK=$ANDROID_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
-          echo "ANDROID_NDK_HOME=$ANDROID_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
-          echo "ANDROID_NDK_ROOT=$ANDROID_ROOT/ndk/25.2.9519653" >> $GITHUB_ENV
+          yes | $SDKMANAGER "ndk;27.0.12077973" > /dev/null 2>&1
+          echo "ANDROID_NDK=$ANDROID_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
+          echo "ANDROID_NDK_ROOT=$ANDROID_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
 
       - name: Configure
         run: |
           mkdir -p build
           cd build
-          # ANDROID_STL=c++_static (NOT c++_shared!): libgameserver.so is loaded
-          # into a patched Fortnite process that does NOT provide
-          # libc++_shared.so next to it. With c++_shared the .so gains
-          # DT_NEEDED "libc++_shared.so" and dlopen() fails instantly at app
-          # launch (UnsatisfiedLinkError - crash with NO tombstone, because it
-          # is a Java-level load failure, not a native SIGSEGV).
-          # c++_static links the C++ runtime into libgameserver.so itself:
-          # fully self-contained, exactly like the pre-integration builds.
-          # Safe here because libgameserver.so is the only C++ .so in the
-          # process and every cross-library boundary (Dobby hooks, UE
-          # ProcessEvent, the MD7_* bridge) is plain C / POD - no STL objects
-          # are ever passed across .so boundaries.
           cmake -G Ninja \
             -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=arm64-v8a \
             -DANDROID_PLATFORM=android-24 \
-            -DANDROID_STL=c++_static \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             ..
 
@@ -58,5 +42,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: OwenGameServer-arm64
-          path: |
-            build/libgameserver.so
+          path: build/libgameserver.so

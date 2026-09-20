@@ -42,7 +42,6 @@ using namespace SDK;
 #include "core/Log.hpp"
 #include "core/Macros.hpp"
 #include "core/Offsets.hpp"
-#include "core/GameThread.hpp"
 #include "core/FName.hpp"
 #include "core/UObject.hpp"
 #include "core/Utils.hpp"

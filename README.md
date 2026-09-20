@@ -1,70 +1,36 @@
 # OwenGameServer — Fortnite 21.30 Android (ARM64) GameServer
 
-Turns the Fortnite mobile client into a listen game-server by injecting
-`libgameserver.so` into the game process.
+> **This tree is the RESTORED working state of commit `4d7e591`** (Sep 18,
+> "Update curl_stubs.cpp") — the last known-good build. Everything after it
+> (the Sep-19 client-app refactor: MD7 FName bridge, ExecFunction hooks,
+> SetClientOffOnly, GameThread deferral, CrashForensics, RuntimeConfig) is
+> preserved on branch **`backup/crash-forensics-debug`** and can be recovered
+> at any time.
 
-## Diagnostic build (crash forensics + runtime bisect)
+## Architecture of this working build (target: `com.epicgames.fortnite2130GameServer`)
 
-The GameThread crash (`SIGSEGV` with `si_code=SI_TKILL`, all frames inside
-`libUnreal.so`) is an **engine-detected fatal error**: Unreal prints the real
-reason (`Fatal error:` / `Assertion failed:`) to logcat and then raises the
-signal deliberately. This build captures everything into
-`OwenGameServer.txt` so no adb/tombstone is required:
+1. `SetDedicatedServerMode()` — `GIsEditor=0 GIsClient=0 GIsServer=1`.
+2. Global **`ProcessEvent` Dobby hook** + cached `UFunction` pointers
+   (`Hooks::CacheFunctions()`), dispatched in `ProcessEventHook`.
+3. `Misc::Listen()` — starts the net driver listening **after** hooks.
+4. Map travel (`open Artemis_Terrain` / `open Creative_NoApollo_Terrain`)
+   issued directly via `KismetSystemLibrary.ExecuteConsoleCommand`.
+5. FName reads go through the engine's own
+   `UKismetStringLibrary::Conv_NameToString`.
 
-1. **Crash report** — on any SIGSEGV/SIGABRT/SIGBUS/SIGILL the library appends
-   a full report: `si_code` meaning, fault address, PC/LR/SP/FP, all GPRs, a
-   frame-pointer backtrace **plus** a raw stack scan, every address classified
-   as `module + RVA`, and a verdict when the crash PC sits inside/near one of
-   our Dobby hook sites (smoking gun for a bad offset).
-2. **Engine error text** — `__android_log_print` / `__android_log_write` /
-   `android_set_abort_message` / `raise` are hooked: every UE FATAL/ERROR
-   logcat line is mirrored into the log as `[UELOG] ...` — this is the actual
-   "Assertion failed: ..." message that explains the crash.
-3. **Heartbeat** — the 15s/60s waits log `[HB] ... world=... GIsClient=...`
-   every second, so the log shows exactly *when* the crash happened relative
-   to our timeline.
+## Why the Sep-19 refactor crashed (root cause, kept for the record)
 
-### Runtime config (bisect without rebuilding)
-
-Create `OwenGameServer.cfg` next to the log file:
-
-```
-/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.cfg
-```
-
-One `key=value` per line (`1/true/yes/on` = enabled), `#` comments:
-
-| key | effect |
-|-----|--------|
-| `safe_mode=1` | do NOTHING (no flag flips, no hooks, no travel) — control experiment |
-| `no_setclientoffonly=1` | skip flipping GIsEditor/GIsClient |
-| `late_flip=1` | flip GIsClient only right before map travel |
-| `no_getnetmode_hook=1` | skip the GetNetMode Dobby hook |
-| `honest_netmode=1` | GetNetMode hook returns the engine's true value (frontend stays client) |
-| `no_tickflush_hook=1` | skip the TickFlush Dobby hook |
-| `no_native_hooks=1` | skip ALL Dobby native hooks |
-| `no_exec_hooks=1` | skip all UFunction ExecFunction hooks |
-| `no_map_travel=1` | skip the `open <map>` command |
-| `no_fatal_api_hooks=1` | skip raise/liblog hooks (signal handlers stay on) |
-
-Defaults = previous behaviour exactly (crash still reproduces, but now fully
-instrumented).
-
-### Suggested bisect order
-
-1. Run as-is (no cfg) → crash → **read the `[UELOG]` line and the crash
-   report** — they name the failing engine check and the faulting RVA.
-2. `safe_mode=1` → still crashes? the cause is outside this library.
-3. `honest_netmode=1` → crash gone? the GetNetMode lie in the frontend was it.
-4. `no_setclientoffonly=1` → crash gone? the GIsClient flip was it.
-5. `no_getnetmode_hook=1` / `no_tickflush_hook=1` → crash gone? a bad hook
-   offset was it (the crash report already tells you via the hook-site
-   verdict).
+The refactor switched the target app to the regular client
+(`com.epicgames.fortnite`) **and** changed the whole runtime architecture in
+one go: `SetClientOffOnly` left the engine in `GIsClient=0 GIsServer=0`
+(standalone limbo), `Misc::Listen()` was never called, `GetNetMode` returned
+`NM_DedicatedServer` while the world was still a client frontend world, and
+`ProcessEvent` was replaced by `UFunction::ExecFunction` pointer swaps. The
+GameThread crash inside `libUnreal.so` was a symptom of that inconsistent
+engine state — not of the FName/Utils code that was later replaced while
+chasing it.
 
 ## Build
-
-GitHub Actions builds the artifact (ARM64, Android 24, NDK r25c, c++_static).
-Local build:
 
 ```sh
 cmake -G Ninja \
@@ -75,5 +41,5 @@ cmake -G Ninja \
 cmake --build build -j 2
 ```
 
-Requirements: NDK r25c (25.2.9519653), ninja, llvm-objcopy.
-`external/MobileDumperCore` is prebuilt (see its own README).
+Requirements: NDK (r25c verified locally), ninja, llvm-objcopy.
+`libgameserver.so` is output in `build/`.

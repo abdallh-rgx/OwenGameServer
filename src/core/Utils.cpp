@@ -9,7 +9,6 @@
 #include <map>
 #include <mutex>
 #include <atomic>
-#include <set>
 #include <string>
 #include <vector>
 
@@ -302,11 +301,7 @@ void MakeWeakPtrInto(FWeakObjectPtr& out, void* obj) {
 }
 
 FString Utils::ToFString(const std::wstring& s) {
-    // thread_local: ToFString is called from both the game thread (hooks) and
-    // background threads (scheduled tasks before deferral existed); a single
-    // shared static buffer was a data race that handed one caller a string
-    // another caller had already overwritten.
-    static thread_local char16_t buf[1024];
+    static char16_t buf[1024];
     int n = (int)s.size();
     if (n > 1020) n = 1020;
 
@@ -426,94 +421,13 @@ bool FWeakObjectPtr::operator!=(const class UObject* Other) const {
 
 namespace UC {
 
-// ============================================================
-// SDK container allocator - OWNERSHIP-TRACKED
-// ------------------------------------------------------------
-// The engine allocates TArray/FString storage with FMalloc. Calling
-// std::realloc/std::free on such memory (or handing our malloc'd memory back
-// to the engine) corrupts the heap and crashes the game later inside
-// libUnreal.so on the GameThread. These hooks therefore track exactly which
-// pointers WE allocated and refuse to touch anything else:
-//   - ContainerRealloc(nullptr, n)          -> malloc, registered
-//   - ContainerRealloc(registered ptr, n)   -> realloc, stays registered
-//   - ContainerRealloc(foreign ptr, n)      -> logs and returns the pointer
-//     UNCHANGED (AddGrow then writes within the old capacity only if there
-//     is slack; the intended fix is to not call AddGrow on engine arrays at
-//     all - see Inventory::GiveItem).
-//   - ContainerFree(any ptr)                -> frees ONLY registered pointers
-//     (engine-owned out-arrays such as GetAllActorsOfClass results are
-//     intentionally leaked - a leak is safe, a cross-allocator free is not).
-// ============================================================
-static std::mutex& ContainerAllocMutex() {
-    static std::mutex m;
-    return m;
-}
-
-static std::set<void*>& ContainerOwnedPtrs() {
-    static std::set<void*> s;
-    return s;
-}
-
-static bool ContainerIsOwned(void* ptr) {
-    if (!ptr) return false;
-    std::lock_guard<std::mutex> lock(ContainerAllocMutex());
-    return ContainerOwnedPtrs().count(ptr) > 0;
-}
-
-static void ContainerRegister(void* ptr) {
-    if (!ptr) return;
-    std::lock_guard<std::mutex> lock(ContainerAllocMutex());
-    ContainerOwnedPtrs().insert(ptr);
-}
-
-static void ContainerUnregister(void* ptr) {
-    if (!ptr) return;
-    std::lock_guard<std::mutex> lock(ContainerAllocMutex());
-    ContainerOwnedPtrs().erase(ptr);
-}
-
 void* ContainerRealloc(void* ptr, int64 newLen, uint32 alignment) {
     (void)alignment;
-
-    if (newLen <= 0) {
-        ContainerFree(ptr);
-        return nullptr;
-    }
-
-    if (ptr == nullptr) {
-        void* fresh = std::malloc((size_t)newLen);
-        ContainerRegister(fresh);
-        return fresh;
-    }
-
-    if (!ContainerIsOwned(ptr)) {
-        // FOREIGN (engine-owned) memory: never realloc it with libc.
-        LOGE("[UC] ContainerRealloc refused on engine-owned pointer %p "
-             "(size %lld) - AddGrow on a game array is not allowed; "
-             "use an engine-managed API instead", ptr, (long long)newLen);
-        return ptr;
-    }
-
-    void* grown = std::realloc(ptr, (size_t)newLen);
-    if (grown != ptr) {
-        ContainerUnregister(ptr);
-        ContainerRegister(grown);
-    }
-    return grown;
+    return std::realloc(ptr, (size_t)newLen);
 }
 
 void ContainerFree(void* ptr) {
-    if (!ptr) return;
-
-    if (!ContainerIsOwned(ptr)) {
-        // Engine-owned out-param storage (e.g. GetAllActorsOfClass results):
-        // intentionally leaked - freeing it with libc would corrupt FMalloc's
-        // heap and crash the game.
-        return;
-    }
-
-    ContainerUnregister(ptr);
-    std::free(ptr);
+    (void)ptr;
 }
 
 }

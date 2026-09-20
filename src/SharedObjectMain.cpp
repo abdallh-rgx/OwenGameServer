@@ -10,8 +10,6 @@
 #include "Looting.hpp"
 #include "Creative.hpp"
 #include "Abilities.hpp"
-#include "CrashForensics.hpp"
-#include "RuntimeConfig.hpp"
 
 #include <cstdio>
 #include <cstdarg>
@@ -21,33 +19,19 @@
 
 static FILE* g_logfile = nullptr;
 static std::mutex g_log_mutex;
-static char   g_logPath[512] = {0};
-static char   g_logDir[480] = {0};
-
-// MobileDumper-7 FName bridge (src/core/mobile_dumper_bridge.cpp + libMobileDumperCore.a)
-extern "C" int MD7_Setup(uintptr_t imageBase);
 
 static void InitLogFile() {
     const char* paths[] = {
-        "/storage/emulated/0/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
-        "/sdcard/Android/data/com.epicgames.fortnite/files/OwenGameServer.txt",
-        "/data/data/com.epicgames.fortnite/files/OwenGameServer.txt",
+        "/storage/emulated/0/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
+        "/sdcard/Android/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
+        "/data/data/com.epicgames.fortnite2130GameServer/files/OwenGameServer.txt",
         "/data/local/tmp/OwenGameServer.txt"
     };
+
     for (auto path : paths) {
         FILE* f = fopen(path, "w");
         if (f) {
             g_logfile = f;
-            setvbuf(f, nullptr, _IONBF, 0);
-            strncpy(g_logPath, path, sizeof(g_logPath) - 1);
-            // remember the directory for the .cfg lookup
-            const char* slash = strrchr(path, '/');
-            if (slash) {
-                size_t n = (size_t)(slash - path);
-                if (n >= sizeof(g_logDir)) n = sizeof(g_logDir) - 1;
-                memcpy(g_logDir, path, n);
-                g_logDir[n] = 0;
-            }
             return;
         }
     }
@@ -59,304 +43,442 @@ static void LOGF(const char* fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
     va_end(ap);
+
     LOGI("%s", buf);
+
     if (g_logfile) {
         std::lock_guard<std::mutex> lock(g_log_mutex);
         fprintf(g_logfile, "%s\n", buf);
         fflush(g_logfile);
-        fsync(fileno(g_logfile));
     }
 }
 
-static int (*GetNetModeOG)(void*) = nullptr;
-static int GetNetModeHook(void* world) {
-    // High-frequency game-thread pump for deferred tasks: the engine calls
-    // GetNetMode constantly on the GameThread, making it a reliable place to
-    // drain the RunOnGameThread queue (world travel, RPCs, ...).
-    Sarah::DrainGameThreadQueue();
-    // honest_netmode: report the engine's real answer instead of the
-    // unconditional NM_DedicatedServer lie (bisect option for the frontend
-    // crash). After map travel GIsClient=0 already makes the true value
-    // NM_DedicatedServer for the server world.
-    if (OwenCfg.honest_netmode && GetNetModeOG) {
-        return GetNetModeOG(world);
+static void (*ProcessEventOG)(UObject*, UFunction*, void*) = nullptr;
+
+namespace Hooks {
+
+UFunction* ReadyToStartMatch = nullptr;
+UFunction* HandleStartingNewPlayer = nullptr;
+UFunction* OnAircraftEnteredDropZone = nullptr;
+UFunction* OnAircraftExitedDropZone = nullptr;
+UFunction* ServerAcknowledgePossession = nullptr;
+UFunction* ServerExecuteInventoryItem = nullptr;
+UFunction* ServerReturnToMainMenu = nullptr;
+UFunction* ServerAttemptAircraftJump = nullptr;
+UFunction* ServerPlayEmoteItem = nullptr;
+UFunction* ServerSendZiplineState = nullptr;
+UFunction* ServerHandlePickupInfo = nullptr;
+UFunction* MovingEmoteStopped = nullptr;
+UFunction* ServerAttemptInventoryDrop = nullptr;
+UFunction* ServerClientIsReadyToRespawn = nullptr;
+UFunction* ServerChangeName = nullptr;
+UFunction* OnCapsuleBeginOverlap = nullptr;
+UFunction* TeleportPlayerPawn = nullptr;
+UFunction* ServerCreateBuildingActor = nullptr;
+UFunction* ServerBeginEditingBuildingActor = nullptr;
+UFunction* ServerEditBuildingActor = nullptr;
+UFunction* ServerEndEditingBuildingActor = nullptr;
+UFunction* ServerRepairBuildingActor = nullptr;
+UFunction* ServerSpawnDeco = nullptr;
+UFunction* ServerSpawnDecoContextTrap = nullptr;
+UFunction* ServerCreateBuildingAndSpawnDeco = nullptr;
+UFunction* ServerCreateBuildingAndSpawnDecoContextTrap = nullptr;
+UFunction* ServerAttemptInteract = nullptr;
+UFunction* PickLootDrops = nullptr;
+UFunction* K2_SpawnPickupInWorld = nullptr;
+UFunction* SpawnItemVariantPickupInWorld = nullptr;
+UFunction* SupplyDropSpawnPickup = nullptr;
+UFunction* SetDynamicFoundationEnabled = nullptr;
+UFunction* SetDynamicFoundationTransform = nullptr;
+UFunction* TeleportPlayerToLinkedVolume = nullptr;
+UFunction* ServerTeleportToPlaygroundLobbyIsland = nullptr;
+UFunction* MakeNewCreativePlot = nullptr;
+UFunction* UpdateCreativePlotName = nullptr;
+
+void CacheFunctions() {
+    ReadyToStartMatch = (UFunction*)Utils::FindObject(L"/Script/Engine.GameMode.ReadyToStartMatch");
+    HandleStartingNewPlayer = (UFunction*)Utils::FindObject(L"/Script/Engine.GameModeBase.HandleStartingNewPlayer");
+    OnAircraftEnteredDropZone = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortGameModeAthena.OnAircraftEnteredDropZone");
+    OnAircraftExitedDropZone = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortGameModeAthena.OnAircraftExitedDropZone");
+    ServerAcknowledgePossession = (UFunction*)Utils::FindObject(L"/Script/Engine.PlayerController.ServerAcknowledgePossession");
+    ServerExecuteInventoryItem = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerExecuteInventoryItem");
+    ServerReturnToMainMenu = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerReturnToMainMenu");
+    ServerAttemptAircraftJump = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortControllerComponent_Aircraft.ServerAttemptAircraftJump");
+    ServerPlayEmoteItem = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerPlayEmoteItem");
+    ServerSendZiplineState = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerPawn.ServerSendZiplineState");
+    ServerHandlePickupInfo = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerPawn.ServerHandlePickupInfo");
+    MovingEmoteStopped = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPawn.MovingEmoteStopped");
+    ServerAttemptInventoryDrop = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerAttemptInventoryDrop");
+    ServerClientIsReadyToRespawn = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerControllerAthena.ServerClientIsReadyToRespawn");
+    ServerChangeName = (UFunction*)Utils::FindObject(L"/Script/Engine.PlayerController.ServerChangeName");
+    OnCapsuleBeginOverlap = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerPawn.OnCapsuleBeginOverlap");
+    TeleportPlayerPawn = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortMissionLibrary.TeleportPlayerPawn");
+    ServerCreateBuildingActor = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerCreateBuildingActor");
+    ServerBeginEditingBuildingActor = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerBeginEditingBuildingActor");
+    ServerEditBuildingActor = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerEditBuildingActor");
+    ServerEndEditingBuildingActor = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerEndEditingBuildingActor");
+    ServerRepairBuildingActor = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerController.ServerRepairBuildingActor");
+    ServerSpawnDeco = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortDecoTool.ServerSpawnDeco");
+    ServerSpawnDecoContextTrap = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortDecoTool_ContextTrap.ServerSpawnDeco_Implementation");
+    ServerCreateBuildingAndSpawnDeco = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortDecoTool.ServerCreateBuildingAndSpawnDeco");
+    ServerCreateBuildingAndSpawnDecoContextTrap = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortDecoTool_ContextTrap.ServerCreateBuildingAndSpawnDeco_Implementation");
+    ServerAttemptInteract = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortControllerComponent_Interaction.ServerAttemptInteract");
+    PickLootDrops = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortKismetLibrary.PickLootDrops");
+    K2_SpawnPickupInWorld = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortKismetLibrary.K2_SpawnPickupInWorld");
+    SpawnItemVariantPickupInWorld = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortKismetLibrary.SpawnItemVariantPickupInWorld");
+    SupplyDropSpawnPickup = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortAthenaSupplyDrop.SpawnPickup");
+    SetDynamicFoundationEnabled = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.BuildingFoundation.SetDynamicFoundationEnabled");
+    SetDynamicFoundationTransform = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.BuildingFoundation.SetDynamicFoundationTransform");
+    TeleportPlayerToLinkedVolume = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortAthenaCreativePortal.TeleportPlayerToLinkedVolume");
+    ServerTeleportToPlaygroundLobbyIsland = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerControllerAthena.ServerTeleportToPlaygroundLobbyIsland");
+    MakeNewCreativePlot = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerControllerAthena.MakeNewCreativePlot");
+    UpdateCreativePlotName = (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortPlayerControllerAthena.UpdateCreativePlotName");
+
+    int total = 0;
+    UFunction* all[] = {
+        ReadyToStartMatch, HandleStartingNewPlayer, OnAircraftEnteredDropZone, OnAircraftExitedDropZone,
+        ServerAcknowledgePossession, ServerExecuteInventoryItem, ServerReturnToMainMenu, ServerAttemptAircraftJump,
+        ServerPlayEmoteItem, ServerSendZiplineState, ServerHandlePickupInfo, MovingEmoteStopped,
+        ServerAttemptInventoryDrop, ServerClientIsReadyToRespawn, ServerChangeName, OnCapsuleBeginOverlap,
+        TeleportPlayerPawn, ServerCreateBuildingActor, ServerBeginEditingBuildingActor, ServerEditBuildingActor,
+        ServerEndEditingBuildingActor, ServerRepairBuildingActor, ServerAttemptInteract, PickLootDrops,
+        K2_SpawnPickupInWorld, SpawnItemVariantPickupInWorld, SupplyDropSpawnPickup,
+        SetDynamicFoundationEnabled, SetDynamicFoundationTransform, TeleportPlayerToLinkedVolume,
+        ServerTeleportToPlaygroundLobbyIsland
+    };
+
+    for (auto* fn : all) if (fn) total++;
+
+    LOGF("[HOOKS] Cached %d/%d UFunctions", total, (int)(sizeof(all) / sizeof(all[0])));
+}
+
+}
+
+void ProcessEventHook(UObject* context, UFunction* function, void* parms) {
+    if (function && parms) {
+        if (function == Hooks::ReadyToStartMatch) {
+            GameMode::ReadyToStartMatch(context, (Params::AGameMode_ReadyToStartMatch*)parms);
+            return;
+        }
+        if (function == Hooks::HandleStartingNewPlayer) {
+            GameMode::HandleStartingNewPlayer(context, (Params::AGameModeBase_HandleStartingNewPlayer*)parms);
+            return;
+        }
+        if (function == Hooks::OnAircraftEnteredDropZone) {
+            GameMode::OnAircraftEnteredDropZone(context, (Params::AFortGameModeAthena_OnAircraftEnteredDropZone*)parms);
+            return;
+        }
+        if (function == Hooks::OnAircraftExitedDropZone) {
+            GameMode::OnAircraftExitedDropZone(context, (Params::AFortGameModeAthena_OnAircraftExitedDropZone*)parms);
+            return;
+        }
+        if (function == Hooks::ServerAcknowledgePossession) {
+            Player::ServerAcknowledgePossession(context, (Params::APlayerController_ServerAcknowledgePossession*)parms);
+            return;
+        }
+        if (function == Hooks::ServerExecuteInventoryItem) {
+            Player::ServerExecuteInventoryItem(context, (Params::AFortPlayerController_ServerExecuteInventoryItem*)parms);
+            return;
+        }
+        if (function == Hooks::ServerReturnToMainMenu) {
+            Player::ServerReturnToMainMenu(context);
+            return;
+        }
+        if (function == Hooks::ServerAttemptAircraftJump) {
+            Player::ServerAttemptAircraftJump(context, (Params::UFortControllerComponent_Aircraft_ServerAttemptAircraftJump*)parms);
+            return;
+        }
+        if (function == Hooks::ServerPlayEmoteItem) {
+            Player::ServerPlayEmoteItem(context, (Params::AFortPlayerController_ServerPlayEmoteItem*)parms);
+            return;
+        }
+        if (function == Hooks::ServerSendZiplineState) {
+            Player::ServerSendZiplineState(context, (Params::AFortPlayerPawn_ServerSendZiplineState*)parms);
+            return;
+        }
+        if (function == Hooks::ServerHandlePickupInfo) {
+            Player::ServerHandlePickupInfo(context, (Params::AFortPlayerPawn_ServerHandlePickupInfo*)parms);
+            return;
+        }
+        if (function == Hooks::MovingEmoteStopped) {
+            Player::MovingEmoteStopped(context);
+            return;
+        }
+        if (function == Hooks::ServerAttemptInventoryDrop) {
+            Player::ServerAttemptInventoryDrop(context, (Params::AFortPlayerController_ServerAttemptInventoryDrop*)parms);
+            return;
+        }
+        if (function == Hooks::ServerClientIsReadyToRespawn) {
+            Player::ServerClientIsReadyToRespawn(context);
+            return;
+        }
+        if (function == Hooks::ServerChangeName) {
+            Player::ServerChangeName(context, (Params::APlayerController_ServerChangeName*)parms);
+            return;
+        }
+        if (function == Hooks::OnCapsuleBeginOverlap) {
+            Player::OnCapsuleBeginOverlap(context, (Params::AFortPlayerPawn_OnCapsuleBeginOverlap*)parms);
+            return;
+        }
+        if (function == Hooks::TeleportPlayerPawn) {
+            Player::TeleportPlayerPawn(context, (Params::UFortMissionLibrary_TeleportPlayerPawn*)parms);
+            return;
+        }
+        if (function == Hooks::ServerCreateBuildingActor) {
+            Building::ServerCreateBuildingActor(context, (Params::AFortPlayerController_ServerCreateBuildingActor*)parms);
+            return;
+        }
+        if (function == Hooks::ServerBeginEditingBuildingActor) {
+            Building::ServerBeginEditingBuildingActor(context, (Params::AFortPlayerController_ServerBeginEditingBuildingActor*)parms);
+            return;
+        }
+        if (function == Hooks::ServerEditBuildingActor) {
+            Building::ServerEditBuildingActor(context, (Params::AFortPlayerController_ServerEditBuildingActor*)parms);
+            return;
+        }
+        if (function == Hooks::ServerEndEditingBuildingActor) {
+            Building::ServerEndEditingBuildingActor(context, (Params::AFortPlayerController_ServerEndEditingBuildingActor*)parms);
+            return;
+        }
+        if (function == Hooks::ServerRepairBuildingActor) {
+            Building::ServerRepairBuildingActor(context, (Params::AFortPlayerController_ServerRepairBuildingActor*)parms);
+            return;
+        }
+        if (function == Hooks::ServerSpawnDeco || function == Hooks::ServerSpawnDecoContextTrap) {
+            Building::ServerSpawnDeco(context, (Params::AFortDecoTool_ServerSpawnDeco*)parms);
+            return;
+        }
+        if (function == Hooks::ServerCreateBuildingAndSpawnDeco || function == Hooks::ServerCreateBuildingAndSpawnDecoContextTrap) {
+            Building::ServerCreateBuildingAndSpawnDeco(context, (Params::AFortDecoTool_ServerCreateBuildingAndSpawnDeco*)parms);
+            return;
+        }
+        if (function == Hooks::ServerAttemptInteract) {
+            Looting::ServerAttemptInteract(context, (Params::UFortControllerComponent_Interaction_ServerAttemptInteract*)parms);
+            return;
+        }
+        if (function == Hooks::PickLootDrops) {
+            Looting::PickLootDrops(context, (Params::UFortKismetLibrary_PickLootDrops*)parms);
+            return;
+        }
+        if (function == Hooks::K2_SpawnPickupInWorld) {
+            Looting::K2_SpawnPickupInWorld(context, (Params::UFortKismetLibrary_K2_SpawnPickupInWorld*)parms);
+            return;
+        }
+        if (function == Hooks::SpawnItemVariantPickupInWorld) {
+            Looting::SpawnItemVariantPickupInWorld(context, (Params::UFortKismetLibrary_SpawnItemVariantPickupInWorld*)parms);
+            return;
+        }
+        if (function == Hooks::SupplyDropSpawnPickup) {
+            Looting::SupplyDropSpawnPickup(context, (Params::AFortAthenaSupplyDrop_SpawnPickup*)parms);
+            return;
+        }
+        if (function == Hooks::SetDynamicFoundationEnabled) {
+            Misc::SetDynamicFoundationEnabled(context, (Params::ABuildingFoundation_SetDynamicFoundationEnabled*)parms);
+            return;
+        }
+        if (function == Hooks::SetDynamicFoundationTransform) {
+            Misc::SetDynamicFoundationTransform(context, (Params::ABuildingFoundation_SetDynamicFoundationTransform*)parms);
+            return;
+        }
+        if (function == Hooks::TeleportPlayerToLinkedVolume) {
+            Creative::TeleportPlayerToLinkedVolume(context, (Params::AFortAthenaCreativePortal_TeleportPlayerToLinkedVolume*)parms);
+            return;
+        }
+        if (function == Hooks::ServerTeleportToPlaygroundLobbyIsland) {
+            Creative::ServerTeleportToPlaygroundLobbyIsland((AFortPlayerControllerAthena*)context);
+            return;
+        }
+        if (function == Hooks::MakeNewCreativePlot) {
+            Creative::MakeNewCreativePlot(context, (Params::AFortPlayerControllerAthena_MakeNewCreativePlot*)parms);
+            return;
+        }
+        if (function == Hooks::UpdateCreativePlotName) {
+            Creative::UpdateCreativePlotName(context, (Params::AFortPlayerControllerAthena_UpdateCreativePlotName*)parms);
+            return;
+        }
     }
+
+    if (ProcessEventOG)
+        ProcessEventOG(context, function, parms);
+}
+
+static int (*GetNetModeOG)(void*) = nullptr;
+
+static int GetNetModeHook(void* world) {
     return 1;
 }
 
 static EEFortTeam (*PickTeamOG)(AFortGameModeAthena*, uint8_t, AFortPlayerControllerAthena*) = nullptr;
+
 static EEFortTeam PickTeamHook(AFortGameModeAthena* gameMode, uint8_t preferredTeam, AFortPlayerControllerAthena* controller) {
     return GameMode::PickTeam(gameMode, preferredTeam, controller);
 }
 
 static APawn* (*SpawnDefaultPawnForOG)(AGameModeBase*, AController*, AActor*) = nullptr;
+
 static APawn* SpawnDefaultPawnForHook(AGameModeBase* gameMode, AController* newPlayer, AActor* startSpot) {
     APawn* result = GameMode::SpawnDefaultPawnFor(gameMode, newPlayer, startSpot);
     if (result) return result;
-    if (SpawnDefaultPawnForOG) return SpawnDefaultPawnForOG(gameMode, newPlayer, startSpot);
+    if (SpawnDefaultPawnForOG)
+        return SpawnDefaultPawnForOG(gameMode, newPlayer, startSpot);
     return nullptr;
 }
 
 static void WaitForWorld() {
     LOGF("[CORE] Waiting for World");
-    for (int i = 0; i < 300; i++) {
-        void* rawWorld = *(void**)(Sarah::ImageBase + Off::GWorld);
-        void* rawEngine = *(void**)(Sarah::ImageBase + Off::GEngine);
-        if ((i % 20) == 0) {
-            LOGF("[CORE] iter %d (~%ds): rawWorld=%p rawEngine=%p", i, i / 2, rawWorld, rawEngine);
-        }
-        if (rawWorld && rawEngine) {
-            LOGF("[CORE] World and Engine ready at iter %d (~%ds)", i, i / 2);
+    for (int i = 0; i < 120; i++) {
+        if (UWorld::GetWorld() && UEngine::GetEngine()) {
+            LOGF("[CORE] World and Engine ready");
             return;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
-    LOGF("[CORE] World wait timeout after 150s");
-}
-
-// Sleep with a 1-second heartbeat: the log then shows exactly WHEN a crash
-// happened relative to our own timeline (the old single 15s/60s sleeps left
-// the crash moment anywhere inside a blind window).
-static void HeartbeatSleep(int seconds, const char* tag) {
-    for (int t = 1; t <= seconds; t++) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        if (!Sarah::ImageBase) continue;
-        void* world = *(void**)(Sarah::ImageBase + Off::GWorld);
-        LOGF("[HB] %s t=%d/%ds world=%p GIsClient=%d GIsServer=%d",
-             tag, t, seconds, world, GetGIsClient(), GetGIsServer());
-    }
-}
-
-static bool ExecuteOpenCommand(const wchar_t* cmd) {
-    UWorld* world = UWorld::GetWorld();
-    if (!world) { LOGF("[MAP] FAIL: world is null"); return false; }
-
-    static char16_t cmdBuf[512];
-    int len = 0;
-    for (const wchar_t* p = cmd; *p && len < 500; p++) cmdBuf[len++] = (char16_t)(*p);
-    cmdBuf[len] = 0;
-
-    struct FStringLocal { char16_t* Data; int32_t Num; int32_t Max; };
-    struct ExecCmdParams { UObject* WorldContextObject; FStringLocal Command; APlayerController* SpecificPlayer; };
-
-    UFunction* execFn = (UFunction*)Utils::FindObject(L"/Script/Engine.KismetSystemLibrary.ExecuteConsoleCommand");
-    UClass* kslClass = (UClass*)Utils::FindObject(L"/Script/Engine.KismetSystemLibrary");
-    if (!execFn || !kslClass || !kslClass->ClassDefaultObject) {
-        LOGF("[MAP] FAIL: ExecuteConsoleCommand not available");
-        return false;
-    }
-
-    ExecCmdParams parms = {};
-    parms.WorldContextObject = world;
-    parms.Command.Data = cmdBuf;
-    parms.Command.Num = len;
-    parms.Command.Max = len + 1;
-    parms.SpecificPlayer = nullptr;
-
-    Sarah::CallProcessEvent(kslClass->ClassDefaultObject, execFn, &parms);
-    return true;
-}
-
-static void InstallExecHooks() {
-    LOGF("[HOOKS] Installing ExecFunction hooks (no ProcessEvent)");
-    GameMode::Hook();
-    LOGF("[HOOKS]   GameMode::Hook DONE");
-    Player::Hook();
-    LOGF("[HOOKS]   Player::Hook DONE");
-    Building::Hook();
-    LOGF("[HOOKS]   Building::Hook DONE");
-    Looting::Hook();
-    LOGF("[HOOKS]   Looting::Hook DONE");
-    Creative::Hook();
-    LOGF("[HOOKS]   Creative::Hook DONE");
-    Misc::Hook();
-    LOGF("[HOOKS]   Misc::Hook DONE");
-    LOGF("[HOOKS] All ExecFunction hooks installed");
-}
-
-static void InstallNativeHooks() {
-    LOGF("[HOOKS] Installing native hooks");
-
-    if (OwenCfg.no_getnetmode_hook) {
-        LOGF("[HOOKS]   GetNetMode SKIPPED (cfg no_getnetmode_hook)");
-    } else {
-        DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
-        LOGF("[HOOKS]   GetNetMode OK%s", OwenCfg.honest_netmode ? " (honest_netmode: returns the TRUE value)" : "");
-    }
-
-    if (OwenCfg.no_tickflush_hook) {
-        LOGF("[HOOKS]   TickFlush SKIPPED (cfg no_tickflush_hook)");
-    } else {
-        DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
-        LOGF("[HOOKS]   TickFlush OK");
-    }
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::ClientOnPawnDied), (void*)Player::ClientOnPawnDied, (void**)&Player::ClientOnPawnDiedOG);
-    LOGF("[HOOKS]   ClientOnPawnDied OK");
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::BuildingActor_OnDamageServer), (void*)Building::OnDamageServer, (void**)&Building::OnDamageServerOG);
-    LOGF("[HOOKS]   BuildingActor_OnDamageServer OK");
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::PickTeam), (void*)PickTeamHook, (void**)&PickTeamOG);
-    LOGF("[HOOKS]   PickTeam OK");
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::StartAircraftPhase), (void*)Misc::StartAircraftPhase, (void**)&Misc::StartAircraftPhaseOG);
-    LOGF("[HOOKS]   StartAircraftPhase OK");
-
-    DobbyHook((void*)(Sarah::ImageBase + Off::SpawnDefaultPawnFor), (void*)SpawnDefaultPawnForHook, (void**)&SpawnDefaultPawnForOG);
-    LOGF("[HOOKS]   SpawnDefaultPawnFor OK");
-
-    LOGF("[HOOKS] All native hooks installed");
+    LOGF("[CORE] World wait timeout");
 }
 
 static void MainThread() {
-    LOGF("[MAIN] MainThread ENTER");
+    LOGF("[MAIN] MainThread started");
 
     std::this_thread::sleep_for(std::chrono::seconds(5));
-    LOGF("[MAIN] after initial sleep");
+    LOGF("[MAIN] Initial delay finished");
 
-    LOGF("[CFG] safe_mode=%d no_setclientoffonly=%d late_flip=%d no_getnetmode_hook=%d "
-         "honest_netmode=%d no_tickflush_hook=%d no_native_hooks=%d no_exec_hooks=%d "
-         "no_map_travel=%d no_fatal_api_hooks=%d",
-         OwenCfg.safe_mode, OwenCfg.no_setclientoffonly, OwenCfg.late_flip,
-         OwenCfg.no_getnetmode_hook, OwenCfg.honest_netmode, OwenCfg.no_tickflush_hook,
-         OwenCfg.no_native_hooks, OwenCfg.no_exec_hooks, OwenCfg.no_map_travel,
-         OwenCfg.no_fatal_api_hooks);
-
-    if (!InitImageBase()) { LOGF("[MAIN] InitImageBase FAILED"); return; }
-    LOGF("[MAIN] ImageBase=0x%lx", Sarah::ImageBase);
-
-    // MobileDumper-7 FName bridge: must be initialized before any name reads
-    // (InSDKUtils::GetNameByIndex and everything built on it). MD7_ReadFName
-    // also self-bootstraps, but setting up here guarantees correct behaviour
-    // from the very first lookup.
-    {
-        const int md7rc = MD7_Setup(Sarah::ImageBase);
-        LOGF("[MAIN] MD7_Setup -> %d (MobileDumper-7 FName bridge)", md7rc);
+    if (!InitImageBase()) {
+        LOGF("[MAIN] InitImageBase FAILED");
+        return;
     }
-
-    if (OwenCfg.safe_mode) {
-        LOGF("[CFG] SAFE MODE: pure observation. No GIsClient flip, no hooks, no map travel.");
-        LOGF("[CFG] If the game still crashes now, the cause is NOT this library's active code.");
-        int t = 0;
-        for (;;) {
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-            t += 5;
-            void* world = *(void**)(Sarah::ImageBase + Off::GWorld);
-            LOGF("[HB][SAFE] t=%ds alive world=%p GIsClient=%d GIsServer=%d",
-                 t, world, GetGIsClient(), GetGIsServer());
-        }
-    }
+    LOGF("[MAIN] libUnreal found");
+    LOGF("[MAIN] ImageBase = 0x%lx", Sarah::ImageBase);
 
     WaitForWorld();
-    LOGF("[MAIN] WaitForWorld returned");
 
-    // The engine is fully initialized now (its own crash handlers are in
-    // place): re-arm the forensics so the module snapshot includes libUnreal
-    // and the chain runs engine -> us, and hook-site correlation works.
-    Sarah::Forensics::InstallSignalHandlers();
-    LOGF("[FORENSICS] re-armed after engine init");
-
-    if (!Sarah::InitGObjectsLayout()) { LOGF("[MAIN] GObjects FAILED"); return; }
-    LOGF("[MAIN] GObjects Num = %d", Sarah::UObjectManager::Num());
-
-    if (OwenCfg.no_setclientoffonly) {
-        LOGF("[CFG] SetClientOffOnly SKIPPED (cfg no_setclientoffonly)");
-    } else if (OwenCfg.late_flip) {
-        LOGF("[CFG] SetClientOffOnly DEFERRED to map travel (cfg late_flip)");
+    if (!Sarah::InitGObjectsLayout()) {
+        LOGF("[CORE] GObjects layout validation FAILED");
     } else {
-        LOGF("[MAIN] Before SetClientOffOnly: GIsEditor=%d GIsClient=%d GIsServer=%d",
-             GetGIsEditor(), GetGIsClient(), GetGIsServer());
-
-        SetClientOffOnly();
-
-        LOGF("[MAIN] After SetClientOffOnly: GIsEditor=%d GIsClient=%d GIsServer=%d",
-             GetGIsEditor(), GetGIsClient(), GetGIsServer());
+        LOGF("[CORE] GObjects layout OK");
+        LOGF("[CORE] GObjects Num = %d", Sarah::UObjectManager::Num());
     }
+
+    LOGF("[CORE] Before SetDedicatedServerMode");
+    LOGF("[CORE] GIsEditor=%d GIsClient=%d GIsServer=%d",
+         GetGIsEditor(), GetGIsClient(), GetGIsServer());
+
+    SetDedicatedServerMode();
+
+    LOGF("[CORE] After SetDedicatedServerMode");
+    LOGF("[CORE] GIsEditor=%d GIsClient=%d GIsServer=%d",
+         GetGIsEditor(), GetGIsClient(), GetGIsServer());
 
     srand((uint32_t)time(nullptr));
 
-    if (OwenCfg.no_native_hooks) {
-        LOGF("[CFG] native hooks SKIPPED (cfg no_native_hooks)");
-    } else {
-        InstallNativeHooks();
-    }
+    LOGF("[HOOKS] Caching functions");
+    Hooks::CacheFunctions();
 
-    if (OwenCfg.no_exec_hooks) {
-        LOGF("[CFG] ExecFunction hooks SKIPPED (cfg no_exec_hooks)");
-    } else {
-        InstallExecHooks();
-    }
+    LOGF("[HOOKS] Installing ProcessEvent");
+    DobbyHook((void*)(Sarah::ImageBase + Off::ProcessEvent), (void*)ProcessEventHook, (void**)&ProcessEventOG);
+    LOGF("[HOOKS] ProcessEvent installed");
+
+    LOGF("[HOOKS] Installing GetNetMode");
+    DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
+    LOGF("[HOOKS] GetNetMode installed");
+
+    LOGF("[HOOKS] Installing TickFlush");
+    DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
+    LOGF("[HOOKS] TickFlush installed");
+
+    LOGF("[HOOKS] Installing ClientOnPawnDied");
+    DobbyHook((void*)(Sarah::ImageBase + Off::ClientOnPawnDied), (void*)Player::ClientOnPawnDied, (void**)&Player::ClientOnPawnDiedOG);
+    LOGF("[HOOKS] ClientOnPawnDied installed");
+
+    LOGF("[HOOKS] Installing BuildingActor_OnDamageServer");
+    DobbyHook((void*)(Sarah::ImageBase + Off::BuildingActor_OnDamageServer), (void*)Building::OnDamageServer, (void**)&Building::BuildingActor_OnDamageServerOG);
+    LOGF("[HOOKS] BuildingActor_OnDamageServer installed");
+
+    LOGF("[HOOKS] Installing PickTeam");
+    DobbyHook((void*)(Sarah::ImageBase + Off::PickTeam), (void*)PickTeamHook, (void**)&PickTeamOG);
+    LOGF("[HOOKS] PickTeam installed");
+
+    LOGF("[HOOKS] Installing StartAircraftPhase");
+    DobbyHook((void*)(Sarah::ImageBase + Off::StartAircraftPhase), (void*)Misc::StartAircraftPhase, (void**)&Misc::StartAircraftPhaseOG);
+    LOGF("[HOOKS] StartAircraftPhase installed");
+
+    LOGF("[HOOKS] Installing SpawnDefaultPawnFor");
+    DobbyHook((void*)(Sarah::ImageBase + Off::SpawnDefaultPawnFor), (void*)SpawnDefaultPawnForHook, (void**)&SpawnDefaultPawnForOG);
+    LOGF("[HOOKS] SpawnDefaultPawnFor installed");
 
     if (bGameSessions) {
+        LOGF("[PATCH] Applying GameSession patch");
         PatchBytes<uint8_t>(Off::GameSessionPatch, 0x85);
         LOGF("[PATCH] GameSession patch applied");
     }
 
-    LOGF("[MAP] Waiting 15s for Frontend to settle");
-    HeartbeatSleep(15, "settle");
+    LOGF("[CORE] All hooks installed");
 
-    if (OwenCfg.no_map_travel) {
-        LOGF("[CFG] map travel SKIPPED (cfg no_map_travel) - observing in frontend");
-        int t = 0;
-        for (;;) {
-            std::this_thread::sleep_for(std::chrono::seconds(5));
-            t += 5;
-            void* world = *(void**)(Sarah::ImageBase + Off::GWorld);
-            LOGF("[HB][NO-TRAVEL] t=%ds alive world=%p GIsClient=%d GIsServer=%d",
-                 t, world, GetGIsClient(), GetGIsServer());
-        }
+    LOGF("[CORE] Starting Listen");
+    if (Misc::Listen()) {
+        LOGF("[CORE] Server is listening");
+    } else {
+        LOGF("[CORE] Listen FAILED");
     }
 
-    LOGF("[MAP] Requesting map travel");
-    const wchar_t* cmd = bCreative ? L"open Creative_NoApollo_Terrain" : L"open Artemis_Terrain";
+    LOGF("[MAP] Starting map travel");
 
-    // UE is not thread-safe: world travel (ExecuteConsoleCommand "open ...")
-    // MUST run on the game thread. MainThread is a background std::thread, so
-    // the command is deferred through the GameThread scheduler and executed
-    // by one of the installed hook pumps (GetNetMode / TickFlush). Calling it
-    // directly from here corrupted engine state and crashed the game with a
-    // SIGSEGV (SI_TKILL) deep inside libUnreal.so on the GameThread.
-    Sarah::RunOnGameThread([cmd]() {
-        if (OwenCfg.late_flip) {
-            // Flip only now, on the game thread, right before travel: the
-            // frontend finished loading as an honest client.
-            LOGF("[CFG] late_flip: applying SetClientOffOnly on GameThread now");
-            SetClientOffOnly();
-            LOGF("[CFG] late_flip: GIsClient=%d GIsServer=%d", GetGIsClient(), GetGIsServer());
-        }
-        if (ExecuteOpenCommand(cmd)) {
-            LOGF("[MAP] Map travel requested");
-        } else {
-            LOGF("[MAP] Map travel FAILED");
-        }
-    });
+    UWorld* oldWorld = UWorld::GetWorld();
 
-    LOGF("[MAP] Waiting 60s for map to load");
-    HeartbeatSleep(60, "mapload");
+    static char16_t cmdBuf[512];
+    const wchar_t* cmd = bCreative
+        ? L"open Creative_NoApollo_Terrain"
+        : L"open Artemis_Terrain";
 
-    LOGF("[MAIN] MainThread DONE");
+    int len = 0;
+    for (const wchar_t* p = cmd; *p && len < 500; p++) {
+        cmdBuf[len++] = (char16_t)(*p);
+    }
+    cmdBuf[len] = 0;
+
+    struct FStringLocal {
+        char16_t* Data;
+        int32_t Num;
+        int32_t Max;
+    };
+
+    struct ExecCmdParams {
+        UObject* WorldContextObject;
+        FStringLocal Command;
+        APlayerController* SpecificPlayer;
+    };
+
+    UFunction* execFn = (UFunction*)Utils::FindObject(
+        L"/Script/Engine.KismetSystemLibrary.ExecuteConsoleCommand");
+    UClass* kslClass = (UClass*)Utils::FindObject(
+        L"/Script/Engine.KismetSystemLibrary");
+
+    if (execFn && kslClass && kslClass->ClassDefaultObject) {
+        ExecCmdParams parms = {};
+        parms.WorldContextObject = oldWorld;
+        parms.Command.Data = cmdBuf;
+        parms.Command.Num = len;
+        parms.Command.Max = len + 1;
+        parms.SpecificPlayer = nullptr;
+
+        Sarah::CallProcessEvent(kslClass->ClassDefaultObject, execFn, &parms);
+        LOGF("[MAP] Map travel requested");
+    } else {
+        LOGF("[MAP] FAIL: ExecuteConsoleCommand not found");
+    }
+
+    LOGF("[CORE] MainThread done");
 }
 
 extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     InitLogFile();
+
     LOGF("========================================");
     LOGF("OwenGameServer loading...");
     LOGF("PID: %d", getpid());
     LOGF("========================================");
 
-    // Runtime config (bisect support) + crash forensics: armed as early as
-    // possible so even crashes during frontend load are captured.
-    LoadOwenConfig(g_logDir);
-    Sarah::Forensics::SetLogPath(g_logPath);
-    Sarah::Forensics::InstallSignalHandlers();
-    if (!OwenCfg.no_fatal_api_hooks && !OwenCfg.safe_mode) {
-        Sarah::Forensics::InstallFatalAPIHooks();
-    } else {
-        LOGI("[FORENSICS] fatal-API hooks skipped (cfg)");
-    }
-
     std::thread(MainThread).detach();
+
     return JNI_VERSION_1_6;
 }
 
