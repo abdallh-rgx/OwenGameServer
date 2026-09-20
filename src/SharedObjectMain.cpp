@@ -10,6 +10,8 @@
 #include "Looting.hpp"
 #include "Creative.hpp"
 #include "Abilities.hpp"
+#include "CrashForensics.hpp"
+#include "RuntimeConfig.hpp"
 
 #include <cstdio>
 #include <cstdarg>
@@ -19,6 +21,8 @@
 
 static FILE* g_logfile = nullptr;
 static std::mutex g_log_mutex;
+static char   g_logPath[512] = {0};
+static char   g_logDir[480] = {0};
 
 // MobileDumper-7 FName bridge (src/core/mobile_dumper_bridge.cpp + libMobileDumperCore.a)
 extern "C" int MD7_Setup(uintptr_t imageBase);
@@ -35,6 +39,15 @@ static void InitLogFile() {
         if (f) {
             g_logfile = f;
             setvbuf(f, nullptr, _IONBF, 0);
+            strncpy(g_logPath, path, sizeof(g_logPath) - 1);
+            // remember the directory for the .cfg lookup
+            const char* slash = strrchr(path, '/');
+            if (slash) {
+                size_t n = (size_t)(slash - path);
+                if (n >= sizeof(g_logDir)) n = sizeof(g_logDir) - 1;
+                memcpy(g_logDir, path, n);
+                g_logDir[n] = 0;
+            }
             return;
         }
     }
@@ -56,7 +69,20 @@ static void LOGF(const char* fmt, ...) {
 }
 
 static int (*GetNetModeOG)(void*) = nullptr;
-static int GetNetModeHook(void* world) { return 1; }
+static int GetNetModeHook(void* world) {
+    // High-frequency game-thread pump for deferred tasks: the engine calls
+    // GetNetMode constantly on the GameThread, making it a reliable place to
+    // drain the RunOnGameThread queue (world travel, RPCs, ...).
+    Sarah::DrainGameThreadQueue();
+    // honest_netmode: report the engine's real answer instead of the
+    // unconditional NM_DedicatedServer lie (bisect option for the frontend
+    // crash). After map travel GIsClient=0 already makes the true value
+    // NM_DedicatedServer for the server world.
+    if (OwenCfg.honest_netmode && GetNetModeOG) {
+        return GetNetModeOG(world);
+    }
+    return 1;
+}
 
 static EEFortTeam (*PickTeamOG)(AFortGameModeAthena*, uint8_t, AFortPlayerControllerAthena*) = nullptr;
 static EEFortTeam PickTeamHook(AFortGameModeAthena* gameMode, uint8_t preferredTeam, AFortPlayerControllerAthena* controller) {
@@ -86,6 +112,19 @@ static void WaitForWorld() {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
     LOGF("[CORE] World wait timeout after 150s");
+}
+
+// Sleep with a 1-second heartbeat: the log then shows exactly WHEN a crash
+// happened relative to our own timeline (the old single 15s/60s sleeps left
+// the crash moment anywhere inside a blind window).
+static void HeartbeatSleep(int seconds, const char* tag) {
+    for (int t = 1; t <= seconds; t++) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        if (!Sarah::ImageBase) continue;
+        void* world = *(void**)(Sarah::ImageBase + Off::GWorld);
+        LOGF("[HB] %s t=%d/%ds world=%p GIsClient=%d GIsServer=%d",
+             tag, t, seconds, world, GetGIsClient(), GetGIsServer());
+    }
 }
 
 static bool ExecuteOpenCommand(const wchar_t* cmd) {
@@ -138,11 +177,19 @@ static void InstallExecHooks() {
 static void InstallNativeHooks() {
     LOGF("[HOOKS] Installing native hooks");
 
-    DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
-    LOGF("[HOOKS]   GetNetMode OK");
+    if (OwenCfg.no_getnetmode_hook) {
+        LOGF("[HOOKS]   GetNetMode SKIPPED (cfg no_getnetmode_hook)");
+    } else {
+        DobbyHook((void*)(Sarah::ImageBase + Off::GetNetMode), (void*)GetNetModeHook, (void**)&GetNetModeOG);
+        LOGF("[HOOKS]   GetNetMode OK%s", OwenCfg.honest_netmode ? " (honest_netmode: returns the TRUE value)" : "");
+    }
 
-    DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
-    LOGF("[HOOKS]   TickFlush OK");
+    if (OwenCfg.no_tickflush_hook) {
+        LOGF("[HOOKS]   TickFlush SKIPPED (cfg no_tickflush_hook)");
+    } else {
+        DobbyHook((void*)(Sarah::ImageBase + Off::TickFlush), (void*)Misc::TickFlush, (void**)&Misc::TickFlushOG);
+        LOGF("[HOOKS]   TickFlush OK");
+    }
 
     DobbyHook((void*)(Sarah::ImageBase + Off::ClientOnPawnDied), (void*)Player::ClientOnPawnDied, (void**)&Player::ClientOnPawnDiedOG);
     LOGF("[HOOKS]   ClientOnPawnDied OK");
@@ -168,6 +215,14 @@ static void MainThread() {
     std::this_thread::sleep_for(std::chrono::seconds(5));
     LOGF("[MAIN] after initial sleep");
 
+    LOGF("[CFG] safe_mode=%d no_setclientoffonly=%d late_flip=%d no_getnetmode_hook=%d "
+         "honest_netmode=%d no_tickflush_hook=%d no_native_hooks=%d no_exec_hooks=%d "
+         "no_map_travel=%d no_fatal_api_hooks=%d",
+         OwenCfg.safe_mode, OwenCfg.no_setclientoffonly, OwenCfg.late_flip,
+         OwenCfg.no_getnetmode_hook, OwenCfg.honest_netmode, OwenCfg.no_tickflush_hook,
+         OwenCfg.no_native_hooks, OwenCfg.no_exec_hooks, OwenCfg.no_map_travel,
+         OwenCfg.no_fatal_api_hooks);
+
     if (!InitImageBase()) { LOGF("[MAIN] InitImageBase FAILED"); return; }
     LOGF("[MAIN] ImageBase=0x%lx", Sarah::ImageBase);
 
@@ -180,24 +235,58 @@ static void MainThread() {
         LOGF("[MAIN] MD7_Setup -> %d (MobileDumper-7 FName bridge)", md7rc);
     }
 
+    if (OwenCfg.safe_mode) {
+        LOGF("[CFG] SAFE MODE: pure observation. No GIsClient flip, no hooks, no map travel.");
+        LOGF("[CFG] If the game still crashes now, the cause is NOT this library's active code.");
+        int t = 0;
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            t += 5;
+            void* world = *(void**)(Sarah::ImageBase + Off::GWorld);
+            LOGF("[HB][SAFE] t=%ds alive world=%p GIsClient=%d GIsServer=%d",
+                 t, world, GetGIsClient(), GetGIsServer());
+        }
+    }
+
     WaitForWorld();
     LOGF("[MAIN] WaitForWorld returned");
+
+    // The engine is fully initialized now (its own crash handlers are in
+    // place): re-arm the forensics so the module snapshot includes libUnreal
+    // and the chain runs engine -> us, and hook-site correlation works.
+    Sarah::Forensics::InstallSignalHandlers();
+    LOGF("[FORENSICS] re-armed after engine init");
 
     if (!Sarah::InitGObjectsLayout()) { LOGF("[MAIN] GObjects FAILED"); return; }
     LOGF("[MAIN] GObjects Num = %d", Sarah::UObjectManager::Num());
 
-    LOGF("[MAIN] Before SetClientOffOnly: GIsEditor=%d GIsClient=%d GIsServer=%d",
-         GetGIsEditor(), GetGIsClient(), GetGIsServer());
+    if (OwenCfg.no_setclientoffonly) {
+        LOGF("[CFG] SetClientOffOnly SKIPPED (cfg no_setclientoffonly)");
+    } else if (OwenCfg.late_flip) {
+        LOGF("[CFG] SetClientOffOnly DEFERRED to map travel (cfg late_flip)");
+    } else {
+        LOGF("[MAIN] Before SetClientOffOnly: GIsEditor=%d GIsClient=%d GIsServer=%d",
+             GetGIsEditor(), GetGIsClient(), GetGIsServer());
 
-    SetClientOffOnly();
+        SetClientOffOnly();
 
-    LOGF("[MAIN] After SetClientOffOnly: GIsEditor=%d GIsClient=%d GIsServer=%d",
-         GetGIsEditor(), GetGIsClient(), GetGIsServer());
+        LOGF("[MAIN] After SetClientOffOnly: GIsEditor=%d GIsClient=%d GIsServer=%d",
+             GetGIsEditor(), GetGIsClient(), GetGIsServer());
+    }
 
     srand((uint32_t)time(nullptr));
 
-    InstallNativeHooks();
-    InstallExecHooks();
+    if (OwenCfg.no_native_hooks) {
+        LOGF("[CFG] native hooks SKIPPED (cfg no_native_hooks)");
+    } else {
+        InstallNativeHooks();
+    }
+
+    if (OwenCfg.no_exec_hooks) {
+        LOGF("[CFG] ExecFunction hooks SKIPPED (cfg no_exec_hooks)");
+    } else {
+        InstallExecHooks();
+    }
 
     if (bGameSessions) {
         PatchBytes<uint8_t>(Off::GameSessionPatch, 0x85);
@@ -205,7 +294,19 @@ static void MainThread() {
     }
 
     LOGF("[MAP] Waiting 15s for Frontend to settle");
-    std::this_thread::sleep_for(std::chrono::seconds(15));
+    HeartbeatSleep(15, "settle");
+
+    if (OwenCfg.no_map_travel) {
+        LOGF("[CFG] map travel SKIPPED (cfg no_map_travel) - observing in frontend");
+        int t = 0;
+        for (;;) {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
+            t += 5;
+            void* world = *(void**)(Sarah::ImageBase + Off::GWorld);
+            LOGF("[HB][NO-TRAVEL] t=%ds alive world=%p GIsClient=%d GIsServer=%d",
+                 t, world, GetGIsClient(), GetGIsServer());
+        }
+    }
 
     LOGF("[MAP] Requesting map travel");
     const wchar_t* cmd = bCreative ? L"open Creative_NoApollo_Terrain" : L"open Artemis_Terrain";
@@ -217,6 +318,13 @@ static void MainThread() {
     // directly from here corrupted engine state and crashed the game with a
     // SIGSEGV (SI_TKILL) deep inside libUnreal.so on the GameThread.
     Sarah::RunOnGameThread([cmd]() {
+        if (OwenCfg.late_flip) {
+            // Flip only now, on the game thread, right before travel: the
+            // frontend finished loading as an honest client.
+            LOGF("[CFG] late_flip: applying SetClientOffOnly on GameThread now");
+            SetClientOffOnly();
+            LOGF("[CFG] late_flip: GIsClient=%d GIsServer=%d", GetGIsClient(), GetGIsServer());
+        }
         if (ExecuteOpenCommand(cmd)) {
             LOGF("[MAP] Map travel requested");
         } else {
@@ -225,7 +333,7 @@ static void MainThread() {
     });
 
     LOGF("[MAP] Waiting 60s for map to load");
-    std::this_thread::sleep_for(std::chrono::seconds(60));
+    HeartbeatSleep(60, "mapload");
 
     LOGF("[MAIN] MainThread DONE");
 }
@@ -236,6 +344,18 @@ extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     LOGF("OwenGameServer loading...");
     LOGF("PID: %d", getpid());
     LOGF("========================================");
+
+    // Runtime config (bisect support) + crash forensics: armed as early as
+    // possible so even crashes during frontend load are captured.
+    LoadOwenConfig(g_logDir);
+    Sarah::Forensics::SetLogPath(g_logPath);
+    Sarah::Forensics::InstallSignalHandlers();
+    if (!OwenCfg.no_fatal_api_hooks && !OwenCfg.safe_mode) {
+        Sarah::Forensics::InstallFatalAPIHooks();
+    } else {
+        LOGI("[FORENSICS] fatal-API hooks skipped (cfg)");
+    }
+
     std::thread(MainThread).detach();
     return JNI_VERSION_1_6;
 }
