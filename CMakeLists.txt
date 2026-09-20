@@ -49,10 +49,18 @@ set_target_properties(dobby PROPERTIES
 #   cmake -G Ninja \
 #     -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
 #     -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-24 \
-#     -DANDROID_STL=c++_shared -DCMAKE_BUILD_TYPE=Release \
+#     -DANDROID_STL=c++_static -DCMAKE_BUILD_TYPE=Release \
 #     -DMD7_BUILD_CORE=ON -B build-core -S /path/to/MobileDumper-7
 #   cmake --build build-core
 #   cp build-core/libMobileDumperCore.a  <this-repo>/external/MobileDumperCore/lib/arm64-v8a/
+#
+# NOTE: the final link of gameserver MUST use ANDROID_STL=c++_static (the
+# NDK toolchain default). c++_shared would add DT_NEEDED "libc++_shared.so";
+# the .so is loaded inside a patched Fortnite process that does not ship that
+# library, so dlopen() would fail at app start with no tombstone. The STL
+# setting of the .a itself is irrelevant (static archives carry unresolved
+# symbols that are resolved at the final link), but c++_static is used there
+# too to keep every documented command consistent.
 #
 # The .a contains ONLY the FNamePool reader (NameArray / FNameEntry / FName +
 # globals). It has NO constructor (main_android.cpp is not compiled), NO
@@ -163,6 +171,15 @@ target_link_options(gameserver PRIVATE
     -Wl,-z,relro
     -Wl,-z,lazy
     -Wl,--allow-multiple-definition
+    # Hide every symbol that comes from a static archive (libc++_static.a,
+    # libc++abi.a, libunwind.a, libdobby.a, libcurl.a, libMobileDumperCore.a)
+    # from the DYNAMIC symbol table. Internal references are already bound at
+    # static-link time, so this only stops the .so from EXPORTING ~2000
+    # libc++/Dobby/curl symbols into the game process - which could otherwise
+    # interpose on libraries loaded later in the same classloader namespace.
+    # The only remaining exports are JNI_OnLoad / JNI_OnUnload (defined in our
+    # own object files), exactly what a loadable JNI library needs.
+    -Wl,--exclude-libs,ALL
 )
 
 target_link_libraries(gameserver
