@@ -41,5 +41,8 @@ cmake -G Ninja \
 cmake --build build -j 2
 ```
 
-Requirements: NDK (r25c verified locally), ninja, llvm-objcopy.
-`libgameserver.so` is output in `build/`.
+Requirements: NDK r27 (27.0.12077973 — what the working 4d7e591 artifact was
+built with on CI; verified locally). The tree does NOT compile with NDK r25c
+(`SDK/Basic.hpp` needs `<format>`, `UnrealContainers.hpp` needs libc++ 17+
+concepts). ninja, llvm-objcopy. `libgameserver.so` is output in `build/`,
+self-contained (c++_static: no `libc++_shared.so` DT_NEEDED — dlopen-safe).
