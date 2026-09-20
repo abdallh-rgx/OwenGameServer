@@ -1,8 +1,6 @@
 #include "pch.h"
 #include "options.h"
-#include "Utils.hpp"
-#include "UObject.hpp"
-#include "FName.hpp"
+#include "Dumper.hpp"
 #include "Misc.hpp"
 #include "GameMode.hpp"
 #include "Player.hpp"
@@ -351,12 +349,8 @@ static void MainThread() {
 
     WaitForWorld();
 
-    if (!Sarah::InitGObjectsLayout()) {
-        LOGF("[CORE] GObjects layout validation FAILED");
-    } else {
-        LOGF("[CORE] GObjects layout OK");
-        LOGF("[CORE] GObjects Num = %d", Sarah::UObjectManager::Num());
-    }
+    LOGF("[CORE] GObjects Num = %d (mini dumper: engine-native lookups)",
+         Sarah::UObjectManager::Num());
 
     LOGF("[CORE] Before SetDedicatedServerMode");
     LOGF("[CORE] GIsEditor=%d GIsClient=%d GIsServer=%d",

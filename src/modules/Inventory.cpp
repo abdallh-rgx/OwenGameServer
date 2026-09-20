@@ -1,9 +1,7 @@
 #include "pch.h"
 #include "Inventory.hpp"
 #include "Player.hpp"
-#include "Utils.hpp"
-#include "UObject.hpp"
-#include "FName.hpp"
+#include "Dumper.hpp"
 
 FFortRangedWeaponStats* Inventory::GetStats(UFortWeaponItemDefinition* def) {
     if (!def) return nullptr;

@@ -8,9 +8,7 @@
 #include "Inventory.hpp"
 #include "Looting.hpp"
 #include "options.h"
-#include "Utils.hpp"
-#include "UObject.hpp"
-#include "FName.hpp"
+#include "Dumper.hpp"
 
 static UFunction* g_ReadyToStartMatch = nullptr;
 static UFunction* g_HandleStartingNewPlayer = nullptr;

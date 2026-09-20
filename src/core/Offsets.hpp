@@ -87,8 +87,9 @@ constexpr uint64_t K2_GetResourceItemDefinition = 0x6E9C44C;
 constexpr uint64_t TossPickupFromContainer  = 0x6E9B548;
 constexpr uint64_t EvaluateCurveTableRow    = 0x9A73B60;
 
-constexpr uint32_t FNamePool_Blocks         = 0x0040;
-constexpr uint32_t FNamePool_ByteCursor     = 0x003C;
-constexpr uint32_t FNameEntry_Stride        = 0x0002;
+// NOTE: the old FNamePool_Blocks/ByteCursor/Stride constants were removed —
+// manual FNamePool walking is dead. FName <-> string conversion goes through
+// the engine's own Conv_NameToString / Conv_StringToName via a single direct
+// ProcessEvent on the KismetStringLibrary CDO (see src/core/Dumper.cpp).
 
 }

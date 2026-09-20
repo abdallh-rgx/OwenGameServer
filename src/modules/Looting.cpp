@@ -1,9 +1,7 @@
 #include "pch.h"
 #include "Looting.hpp"
 #include "Inventory.hpp"
-#include "Utils.hpp"
-#include "UObject.hpp"
-#include "FName.hpp"
+#include "Dumper.hpp"
 
 static void SetupLDSForPackage(std::vector<FFortItemEntry>& lootDrops, FName package, int i, FName tierGroup, int worldLevel) {
     std::vector<FFortLootPackageData*> lpGroups;

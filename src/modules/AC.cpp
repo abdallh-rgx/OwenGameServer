@@ -2,7 +2,7 @@
 #include "AC.hpp"
 #include "API.hpp"
 #include "options.h"
-#include "Utils.hpp"
+#include "Dumper.hpp"
 
 void AC::CheckUser(AFortPlayerControllerAthena* controller) {
     if (bDev) return;

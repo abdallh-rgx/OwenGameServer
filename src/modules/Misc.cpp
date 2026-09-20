@@ -2,9 +2,7 @@
 #include "Misc.hpp"
 #include "API.hpp"
 #include "options.h"
-#include "Utils.hpp"
-#include "UObject.hpp"
-#include "FName.hpp"
+#include "Dumper.hpp"
 
 #include <cstdlib>
 #include <cstdarg>

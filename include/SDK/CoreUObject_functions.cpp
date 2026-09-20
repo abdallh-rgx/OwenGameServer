@@ -21,18 +21,18 @@ SDK_NAMESPACE_START
 
 class UObject* UObject::FindObjectFastImpl(const std::string& Name, EClassCastFlags RequiredType)
 {
-	for (int i = 0; i < InSDKUtils::GetGObjects()->Num(); ++i)
-	{
-		UObject* Object = InSDKUtils::GetObjectByIndex(i);
-	
-		if (!Object)
-			continue;
-		
-		if (Object->HasTypeFlag(RequiredType) && Object->GetName() == Name)
-			return Object;
-	}
+        // Mini-dumper: engine-native short-name lookup through the object
+        // hash table (StaticFindObject — thread-safe, no array walking).
+        // The original generated implementation walked ALL GObjects
+        // entries calling GetName() on each — a Conv_NameToString
+        // ProcessEvent per object that crashed any background thread
+        // and recursed infinitely through UClass::GetFunction(char*).
+        UObject* Object = BasicFilesImplUtils::FindClassByName(Name);
 
-	return nullptr;
+        if (Object && RequiredType != EClassCastFlags::None && !Object->HasTypeFlag(RequiredType))
+                return nullptr;
+
+        return Object;
 }
 
 
@@ -41,18 +41,14 @@ class UObject* UObject::FindObjectFastImpl(const std::string& Name, EClassCastFl
 
 class UObject* UObject::FindObjectImpl(const std::string& FullName, EClassCastFlags RequiredType)
 {
-	for (int i = 0; i < InSDKUtils::GetGObjects()->Num(); ++i)
-	{
-		UObject* Object = InSDKUtils::GetObjectByIndex(i);
-	
-		if (!Object)
-			continue;
-		
-		if (Object->HasTypeFlag(RequiredType) && Object->GetFullName() == FullName)
-			return Object;
-	}
+        // Mini-dumper: engine-native full-path lookup (StaticFindObject).
+        // See FindObjectFastImpl for why the generated walker had to go.
+        UObject* Object = BasicFilesImplUtils::FindClassByFullName(FullName);
 
-	return nullptr;
+        if (Object && RequiredType != EClassCastFlags::None && !Object->HasTypeFlag(RequiredType))
+                return nullptr;
+
+        return Object;
 }
 
 
@@ -61,24 +57,24 @@ class UObject* UObject::FindObjectImpl(const std::string& FullName, EClassCastFl
 
 std::string UObject::GetFullName() const
 {
-	if (reinterpret_cast<uintptr_t>(this) != 0 && Class)
-	{
-		std::string Temp;
+        if (reinterpret_cast<uintptr_t>(this) != 0 && Class)
+        {
+                std::string Temp;
 
-		for (UObject* NextOuter = Outer; NextOuter; NextOuter = NextOuter->Outer)
-		{
-			Temp = NextOuter->GetName() + "." + Temp;
-		}
+                for (UObject* NextOuter = Outer; NextOuter; NextOuter = NextOuter->Outer)
+                {
+                        Temp = NextOuter->GetName() + "." + Temp;
+                }
 
-		std::string Name = Class->GetName();
-		Name += " ";
-		Name += Temp;
-		Name += GetName();
+                std::string Name = Class->GetName();
+                Name += " ";
+                Name += Temp;
+                Name += GetName();
 
-		return Name;
-	}
+                return Name;
+        }
 
-	return "None";
+        return "None";
 }
 
 
@@ -87,7 +83,7 @@ std::string UObject::GetFullName() const
 
 std::string UObject::GetName() const
 {
-	return reinterpret_cast<uintptr_t>(this) != 0 ? Name.ToString() : "None";
+        return reinterpret_cast<uintptr_t>(this) != 0 ? Name.ToString() : "None";
 }
 
 
@@ -96,7 +92,7 @@ std::string UObject::GetName() const
 
 bool UObject::HasTypeFlag(EClassCastFlags TypeFlags) const
 {
-	return (Class->CastFlags & TypeFlags);
+        return (Class->CastFlags & TypeFlags);
 }
 
 
@@ -105,7 +101,7 @@ bool UObject::HasTypeFlag(EClassCastFlags TypeFlags) const
 
 bool UObject::IsA(EClassCastFlags TypeFlags) const
 {
-	return (Class->CastFlags & TypeFlags);
+        return (Class->CastFlags & TypeFlags);
 }
 
 
@@ -114,7 +110,7 @@ bool UObject::IsA(EClassCastFlags TypeFlags) const
 
 bool UObject::IsA(const class FName& ClassName) const
 {
-	return Class->IsSubclassOf(ClassName);
+        return Class->IsSubclassOf(ClassName);
 }
 
 
@@ -123,7 +119,7 @@ bool UObject::IsA(const class FName& ClassName) const
 
 bool UObject::IsA(const class UClass* TypeClass) const
 {
-	return Class->IsSubclassOf(TypeClass);
+        return Class->IsSubclassOf(TypeClass);
 }
 
 
@@ -132,7 +128,7 @@ bool UObject::IsA(const class UClass* TypeClass) const
 
 bool UObject::IsDefaultObject() const
 {
-	return (Flags & EObjectFlags::ClassDefaultObject);
+        return (Flags & EObjectFlags::ClassDefaultObject);
 }
 
 
@@ -143,16 +139,16 @@ bool UObject::IsDefaultObject() const
 
 void UObject::ExecuteUbergraph(int32 EntryPoint)
 {
-	static class UFunction* Func = nullptr;
+        static class UFunction* Func = nullptr;
 
-	if (Func == nullptr)
-		Func = Class->GetFunction("Object", "ExecuteUbergraph");
+        if (Func == nullptr)
+                Func = Class->GetFunction("Object", "ExecuteUbergraph");
 
-	Params::UObject_ExecuteUbergraph Parms{};
+        Params::UObject_ExecuteUbergraph Parms{};
 
-	Parms.EntryPoint = EntryPoint;
+        Parms.EntryPoint = EntryPoint;
 
-	UObject::ProcessEvent(Func, &Parms);
+        UObject::ProcessEvent(Func, &Parms);
 }
 
 
@@ -161,11 +157,11 @@ void UObject::ExecuteUbergraph(int32 EntryPoint)
 
 bool UStruct::IsSubclassOf(const UStruct* Base) const
 {
-	if (!Base)
-		return false;
+        if (!Base)
+                return false;
 
-	const int32 NumParentStructBasesInChainMinusOne = Base->BaseChain.NumStructBasesInChainMinusOne;
-	return NumParentStructBasesInChainMinusOne <= BaseChain.NumStructBasesInChainMinusOne && BaseChain.StructBaseChainArray[NumParentStructBasesInChainMinusOne] == &Base->BaseChain;
+        const int32 NumParentStructBasesInChainMinusOne = Base->BaseChain.NumStructBasesInChainMinusOne;
+        return NumParentStructBasesInChainMinusOne <= BaseChain.NumStructBasesInChainMinusOne && BaseChain.StructBaseChainArray[NumParentStructBasesInChainMinusOne] == &Base->BaseChain;
 }
 
 
@@ -174,16 +170,16 @@ bool UStruct::IsSubclassOf(const UStruct* Base) const
 
 bool UStruct::IsSubclassOf(const FName& BaseClassName) const
 {
-	if (BaseClassName.IsNone())
-		return false;
+        if (BaseClassName.IsNone())
+                return false;
 
-	for (const UStruct* Struct = this; Struct; Struct = Struct->SuperStruct)
-	{
-		if (Struct->Name == BaseClassName)
-			return true;
-	}
+        for (const UStruct* Struct = this; Struct; Struct = Struct->SuperStruct)
+        {
+                if (Struct->Name == BaseClassName)
+                        return true;
+        }
 
-	return false;
+        return false;
 }
 
 
@@ -192,19 +188,19 @@ bool UStruct::IsSubclassOf(const FName& BaseClassName) const
 
 class UFunction* UClass::GetFunction(const FName& ClassName, const FName& FuncName) const
 {
-	for (const UStruct* Clss = this; Clss; Clss = Clss->SuperStruct)
-	{
-		if (Clss->Name != ClassName)
-			continue;
+        for (const UStruct* Clss = this; Clss; Clss = Clss->SuperStruct)
+        {
+                if (Clss->Name != ClassName)
+                        continue;
 
-		for (UField* Field = Clss->Children; Field; Field = Field->Next)
-		{
-			if (Field->HasTypeFlag(EClassCastFlags::Function) && Field->Name == FuncName)
-				return static_cast<class UFunction*>(Field);
-		}
-	}
+                for (UField* Field = Clss->Children; Field; Field = Field->Next)
+                {
+                        if (Field->HasTypeFlag(EClassCastFlags::Function) && Field->Name == FuncName)
+                                return static_cast<class UFunction*>(Field);
+                }
+        }
 
-	return nullptr;
+        return nullptr;
 }
 
 
@@ -213,16 +209,16 @@ class UFunction* UClass::GetFunction(const FName& ClassName, const FName& FuncNa
 
 class UFunction* UClass::GetFunction(const FName& FuncName) const
 {
-	for (const UStruct* Clss = this; Clss; Clss = Clss->SuperStruct)
-	{
-		for (UField* Field = Clss->Children; Field; Field = Field->Next)
-		{
-			if (Field->HasTypeFlag(EClassCastFlags::Function) && Field->Name == FuncName)
-				return static_cast<class UFunction*>(Field);
-		}
-	}
+        for (const UStruct* Clss = this; Clss; Clss = Clss->SuperStruct)
+        {
+                for (UField* Field = Clss->Children; Field; Field = Field->Next)
+                {
+                        if (Field->HasTypeFlag(EClassCastFlags::Function) && Field->Name == FuncName)
+                                return static_cast<class UFunction*>(Field);
+                }
+        }
 
-	return nullptr;
+        return nullptr;
 }
 
 
@@ -231,19 +227,12 @@ class UFunction* UClass::GetFunction(const FName& FuncName) const
 
 class UFunction* UClass::GetFunction(const char* ClassName, const char* FuncName) const
 {
-	for(const UStruct* Clss = this; Clss; Clss = Clss->SuperStruct)
-	{
-		if (Clss->GetName() != ClassName)
-			continue;
-			
-		for (UField* Field = Clss->Children; Field; Field = Field->Next)
-		{
-			if(Field->HasTypeFlag(EClassCastFlags::Function) && Field->GetName() == FuncName)
-				return static_cast<class UFunction*>(Field);
-		}
-	}
-
-	return nullptr;
+        // Mini-dumper: resolve both names to FName once (cached, safe)
+        // and delegate to the FName overload below, which compares plain
+        // indices. The original generated implementation called
+        // Clss->GetName() per super-class — every name went through a
+        // Conv_NameToString ProcessEvent (recursion + thread-unsafety).
+        return GetFunction(BasicFilesImplUtils::StringToName(ClassName), BasicFilesImplUtils::StringToName(FuncName));
 }
 
 

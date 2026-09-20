@@ -1,8 +1,6 @@
 #include "pch.h"
 #include "Abilities.hpp"
-#include "Utils.hpp"
-#include "UObject.hpp"
-#include "FName.hpp"
+#include "Dumper.hpp"
 
 FGameplayAbilitySpecHandle Abilities::GiveAbility(UAbilitySystemComponent* asc, UObject* ability) {
     if (!asc || !ability) return;

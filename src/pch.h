@@ -42,9 +42,7 @@ using namespace SDK;
 #include "core/Log.hpp"
 #include "core/Macros.hpp"
 #include "core/Offsets.hpp"
-#include "core/FName.hpp"
-#include "core/UObject.hpp"
-#include "core/Utils.hpp"
+#include "core/Dumper.hpp"
 
 #include "modules/Abilities.hpp"
 #include "modules/AC.hpp"

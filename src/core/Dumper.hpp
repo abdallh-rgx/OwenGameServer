@@ -1,10 +1,76 @@
 #pragma once
+// ============================================================
+// Mini Dumper — the engine-native UObject / FName core
+// ------------------------------------------------------------
+// Replaces the old src/core/UObject.* + src/core/Utils.* +
+// src/core/FName.hpp. Their manual GObjects walking
+// (UObject::FindClassFast / FindObjectImpl / UEngine::GetEngine)
+// called GetName() — a Conv_NameToString ProcessEvent — for EVERY
+// object in the array:
+//   * from a background thread that is a guaranteed GameThread crash
+//   * through UClass::GetFunction(const char*, const char*) it even
+//     recursed infinitely:
+//       Conv_NameToString -> GetFunction -> GetName()
+//         -> Conv_NameToString -> ...  (stack overflow)
+//
+// Architecture follows the reference gameservers
+// (plooshi/Crystal-19.10, Ducki67/20.40):
+//   * FindObject / LoadObject  -> the ENGINE's StaticFindObject /
+//     StaticLoadObject (hash-based, thread-safe, no array walking)
+//   * StaticClass()/class-by-name -> StaticFindObject with the
+//     "/Script/CoreUObject.Class" meta-class filter (+ module
+//     prefix probing fallback)
+//   * FName -> string via ONE direct ProcessEvent on the
+//     KismetStringLibrary CDO (game thread only, function resolved
+//     once by full path — never through the SDK wrapper)
+//   * GObjects is touched ONLY for by-index item reads
+//     (FWeakObjectPtr) using the SDK's padded chunked layout
+// ============================================================
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
+#include <atomic>
 #include "Offsets.hpp"
 #include "AndroidBase.hpp"
-#include "FName.hpp"
+
+using ProcessEvent_t = void (*)(UObject*, UFunction*, void*);
+
+namespace Sarah {
+
+// ---- engine-native lookups (thread-safe) ---------------------
+UObject* StaticFind(UClass* cls, const wchar_t* path, bool exactClass = false);
+UObject* StaticLoad(UClass* cls, const wchar_t* path);
+
+// ---- GObjects by-index access (plain reads, no probing) ------
+int32_t  GObjectsNum();
+uint8_t* GetItemByIndex(int32_t index);
+UObject* GetObjectByIndex(int32_t index);
+
+// ---- ProcessEvent ---------------------------------------------
+extern ProcessEvent_t ProcessEventPtr;
+void CallProcessEvent(UObject* obj, UFunction* func, void* params);
+
+class UObjectManager {
+public:
+    static int32_t Num();
+    static UObject* GetByIndex(int32_t index);
+    static UObject* Find(const wchar_t* path, UClass* cls = nullptr);
+    static UObject* Load(const wchar_t* path, UClass* cls = nullptr);
+    static UObject* FindOrLoad(const wchar_t* path, UClass* cls = nullptr);
+};
+
+extern std::atomic<uint32_t> GFastArrayIDCounter;
+
+} // namespace Sarah
+
+// ---- FName construction (game thread; cached) -----------------
+FName MakeFName(const wchar_t* name);
+uint32_t MakeFNameIndex(const wchar_t* name);
+
+// ============================================================
+// Inline helpers (carried over from the old Utils.hpp — unchanged)
+// ============================================================
 
 struct FVectorLocal {
     double X, Y, Z;
@@ -155,7 +221,3 @@ public:
 
     static void MarkArrayDirty(FFastArraySerializer& serializer);
 };
-
-namespace Sarah {
-void* EngineRealloc(void* ptr, int64_t newLen, uint32_t alignment);
-}
