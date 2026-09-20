@@ -210,11 +210,19 @@ static void MainThread() {
     LOGF("[MAP] Requesting map travel");
     const wchar_t* cmd = bCreative ? L"open Creative_NoApollo_Terrain" : L"open Artemis_Terrain";
 
-    if (ExecuteOpenCommand(cmd)) {
-        LOGF("[MAP] Map travel requested");
-    } else {
-        LOGF("[MAP] Map travel FAILED");
-    }
+    // UE is not thread-safe: world travel (ExecuteConsoleCommand "open ...")
+    // MUST run on the game thread. MainThread is a background std::thread, so
+    // the command is deferred through the GameThread scheduler and executed
+    // by one of the installed hook pumps (GetNetMode / TickFlush). Calling it
+    // directly from here corrupted engine state and crashed the game with a
+    // SIGSEGV (SI_TKILL) deep inside libUnreal.so on the GameThread.
+    Sarah::RunOnGameThread([cmd]() {
+        if (ExecuteOpenCommand(cmd)) {
+            LOGF("[MAP] Map travel requested");
+        } else {
+            LOGF("[MAP] Map travel FAILED");
+        }
+    });
 
     LOGF("[MAP] Waiting 60s for map to load");
     std::this_thread::sleep_for(std::chrono::seconds(60));

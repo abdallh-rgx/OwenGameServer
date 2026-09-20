@@ -90,39 +90,47 @@ UFortWorldItem* Inventory::GiveItem(AFortPlayerController* pc, UFortItemDefiniti
     if (!pc || !pc->WorldInventory || !def || !count)
         return nullptr;
 
-    if (!bManualMode) {
-        if (auto worldDef = CastSDK<UFortWorldItemDefinition>(def)) {
-            Params::UFortKismetLibrary_GiveItemToInventoryOwner params{};
-            params.InventoryOwner.ObjectPointer = pc;
-            params.InventoryOwner.InterfacePointer = pc;
-            params.ItemDefinition = worldDef;
-            params.ItemVariantGuid = FGuid();
-            params.NumberToGive = count;
-            params.bNotifyPlayer = showPickupNoti;
-            params.ItemLevel = level;
-            params.PickupInstigatorHandle = 0;
-            params.bUseItemPickupAnalyticEvent = false;
+    // Engine-managed path ONLY: GiveItemToInventoryOwner (ProcessEvent) lets
+    // the engine grow the inventory arrays with ITS OWN allocator (FMalloc).
+    //
+    // The old "manual mode" used TArray<T>::AddGrow -> UC::ContainerRealloc
+    // -> std::realloc on arrays owned by the game (WorldInventory->Inventory),
+    // i.e. libc's realloc on UE-allocator memory: undefined behaviour that
+    // corrupted the heap and crashed the game later inside libUnreal.so on
+    // the GameThread. That path is removed for good - if the item is not a
+    // UFortWorldItemDefinition, spawn a pickup instead of touching the arrays.
+    if (auto worldDef = CastSDK<UFortWorldItemDefinition>(def)) {
+        Params::UFortKismetLibrary_GiveItemToInventoryOwner params{};
+        params.InventoryOwner.ObjectPointer = pc;
+        params.InventoryOwner.InterfacePointer = pc;
+        params.ItemDefinition = worldDef;
+        params.ItemVariantGuid = FGuid();
+        params.NumberToGive = count;
+        params.bNotifyPlayer = showPickupNoti;
+        params.ItemLevel = level;
+        params.PickupInstigatorHandle = 0;
+        params.bUseItemPickupAnalyticEvent = false;
 
-            Sarah::CallProcessEvent(UFortKismetLibrary::GetDefaultObj(),
-                (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortKismetLibrary.GiveItemToInventoryOwner"),
-                &params);
-            return nullptr;
-        }
+        Sarah::CallProcessEvent(UFortKismetLibrary::GetDefaultObj(),
+            (UFunction*)Utils::FindObject(L"/Script/FortniteGame.FortKismetLibrary.GiveItemToInventoryOwner"),
+            &params);
         return nullptr;
     }
 
-    UFortWorldItem* item = (UFortWorldItem*)def->CreateTemporaryItemInstanceBP(count, level);
-    if (!item) return nullptr;
-    item->SetOwningControllerForTemporaryItem(pc);
-    item->ItemEntry.LoadedAmmo = loadedAmmo;
-    item->ItemEntry.PhantomReserveAmmo = phantomReserve;
-
-    pc->WorldInventory->Inventory.ReplicatedEntries.AddGrow(item->ItemEntry);
-    pc->WorldInventory->Inventory.ItemInstances.AddGrow(item);
-
-    if (updateInventory)
-        TriggerInventoryUpdate(pc, &item->ItemEntry);
-    return item;
+    // Not a world item (trap/gadget definitions): drop it as a pickup at the
+    // player's location instead of manually editing engine-owned arrays.
+    if (pc->MyFortPawn) {
+        FVector loc = pc->MyFortPawn->K2_GetActorLocation();
+        FFortItemEntry* entry = MakeItemEntry(def, count, level);
+        if (entry) {
+            entry->LoadedAmmo = loadedAmmo;
+            entry->PhantomReserveAmmo = phantomReserve;
+            SpawnPickup(loc, *entry, EEFortPickupSourceTypeFlag::Player, EEFortPickupSpawnSource::Unset,
+                pc->MyFortPawn, -1, true, true);
+            delete entry;
+        }
+    }
+    return nullptr;
 }
 
 UFortWorldItem* Inventory::GiveItem(AFortPlayerController* pc, FFortItemEntry entry, int count,

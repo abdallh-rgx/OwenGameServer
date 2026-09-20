@@ -3,8 +3,12 @@
 
 class Inventory {
 public:
-    static inline bool bManualMode = false;
-    static inline bool bModeTested = false;
+    // NOTE: bManualMode is REMOVED. The manual inventory-add path
+    // (TArray::AddGrow on WorldInventory->Inventory through UC::ContainerRealloc
+    // = std::realloc) reallocated engine-owned memory with libc's allocator,
+    // corrupting the heap and crashing the game inside libUnreal.so.
+    // GiveItem now always goes through the engine-managed
+    // GiveItemToInventoryOwner ProcessEvent (or spawns a pickup).
 
     static FFortRangedWeaponStats* GetStats(UFortWeaponItemDefinition* def);
     static int GetLevel(const FDataTableCategoryHandle& categoryHandle);

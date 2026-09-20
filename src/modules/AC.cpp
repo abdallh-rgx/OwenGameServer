@@ -18,9 +18,16 @@ void AC::CheckUser(AFortPlayerControllerAthena* controller) {
         LOGI("[AC] checkUser '%s' -> '%s' (len=%d)", name.c_str(), response.c_str(), (int)response.size());
         if (!response.empty() && response != "Valid") {
             LOGI("[AC] REJECTING '%s'", name.c_str());
-            if (controller && controller->NetConnection) {
-                controller->ClientReturnToMainMenu(Utils::ToFString(L""));
-            }
+            // RPCs (Client* functions) must only be issued on the game thread:
+            // this lambda runs on a background std::thread, so defer the kick
+            // through the GameThread scheduler instead of calling
+            // ClientReturnToMainMenu directly (engine is not thread-safe and
+            // corrupts state / crashes when ProcessEvent runs off-thread).
+            Sarah::RunOnGameThread([controller]() {
+                if (controller && controller->NetConnection) {
+                    controller->ClientReturnToMainMenu(Utils::ToFString(L""));
+                }
+            });
         }
     }).detach();
 }

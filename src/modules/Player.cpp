@@ -429,6 +429,10 @@ static void GiveElimHeal(AFortPlayerPawnAthena* killerPawn) {
 }
 
 void Player::ClientOnPawnDied(AFortPlayerControllerAthena* playerController, FFortPlayerDeathReport& deathReport) {
+    // Extra game-thread pump (this is a native Dobby hook - the engine calls
+    // it on the GameThread).
+    Sarah::DrainGameThreadQueue();
+
     if (!playerController) { if (ClientOnPawnDiedOG) ClientOnPawnDiedOG(playerController, deathReport); return; }
     auto world = UWorld::GetWorld();
     if (!world) { if (ClientOnPawnDiedOG) ClientOnPawnDiedOG(playerController, deathReport); return; }
@@ -545,14 +549,17 @@ void Player::ClientOnPawnDied(AFortPlayerControllerAthena* playerController, FFo
         }
     }
 
-    std::thread([playerController]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Destroying the pawn is an engine operation -> run it on the game thread
+    // via the scheduler (this hook itself runs on the game thread, so the
+    // task executes on the next pump pass instead of racing from a
+    // background std::thread).
+    Sarah::RunOnGameThread([playerController]() {
         if (playerController && playerController->MyFortPawn) {
             Misc::PlayersToDestroyLocked = true;
             Misc::PlayersToDestroy.push_back(playerController->MyFortPawn);
             Misc::PlayersToDestroyLocked = false;
         }
-    }).detach();
+    });
 
     if (ClientOnPawnDiedOG) ClientOnPawnDiedOG(playerController, deathReport);
 }

@@ -70,10 +70,18 @@ namespace {
 }
 
 int Misc::GetNetMode(void* world) {
+    // High-frequency game-thread pump for deferred tasks: the engine calls
+    // GetNetMode constantly on the GameThread, making it a reliable place to
+    // drain the RunOnGameThread queue (world travel, RPCs, ...).
+    Sarah::DrainGameThreadQueue();
     return 1;
 }
 
 void Misc::TickFlush(void* driver, float dt) {
+    // GameThread pump: UNetDriver::TickFlush runs on the game thread every
+    // net tick - drain deferred tasks before touching the driver.
+    Sarah::DrainGameThreadQueue();
+
     if (!driver) {
         if (TickFlushOG) TickFlushOG(driver, dt);
         return;
